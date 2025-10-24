@@ -21,7 +21,6 @@ let setupMode = true
 
 // URLs to render offscreen
 const urls = [
-  'https://portal.azure.com/#@clevio.no/dashboard/arm/subscriptions/6304f6f2-19a2-4649-a034-da3b0beeb9ca/resourcegroups/dashboards/providers/microsoft.portal/dashboards/112ecbe9-e9f9-466a-8eae-e017c92865c1',
   'https://cubed.no',
   'https://www.github.com',
   'https://www.wikipedia.org',

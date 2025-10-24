@@ -11,8 +11,6 @@ export default defineConfig({
     vue({
       template: {
         compilerOptions: {
-          // Treat webview as a custom element (Electron webview tag)
-          // Note: We're not using webview anymore, but keeping this for backwards compatibility
           isCustomElement: (tag) => tag === 'webview',
         },
       },
@@ -20,11 +18,9 @@ export default defineConfig({
     vueDevTools(),
     electron([
       {
-        // Main process entry point
         entry: 'electron/main.ts',
       },
       {
-        // Preload script - MUST use CommonJS format for sandbox compatibility
         entry: 'electron/preload.ts',
         onstart({ startup }) {
           startup()
@@ -32,10 +28,12 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
+            minify: false,
             rollupOptions: {
+              external: ['electron'],
               output: {
-                format: 'cjs', // Use CommonJS format for preload
-                entryFileNames: '[name].js', // Output as .js not .mjs
+                format: 'cjs',
+                entryFileNames: '[name].js',
               },
             },
           },
