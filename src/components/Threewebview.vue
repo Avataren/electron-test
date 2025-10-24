@@ -25,6 +25,12 @@ interface Fragment {
   rotationSpeed: THREE.Vector3
 }
 
+interface Slice {
+  mesh: THREE.Mesh
+  velocity: THREE.Vector3
+  direction: number // 1 for right, -1 for left
+}
+
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const currentIndex = ref(0)
 const isTransitioning = ref(false)
@@ -41,6 +47,11 @@ let urls: string[] = []
 const fragments: Fragment[] = []
 const GRID_COLS = 20
 const GRID_ROWS = 10
+
+// Slice system for transition 2 (horizontal slices)
+const slices: Slice[] = []
+const NUM_SLICES = 8
+let currentTransitionType: 'rain' | 'slice' = 'rain'
 
 // Timing
 const ROTATION_INTERVAL = 10000
@@ -161,7 +172,7 @@ const animate = () => {
   requestAnimationFrame(animate)
 
   if (isTransitioning.value && fragments.length > 0) {
-    // Animate fragments falling
+    // Animate fragments falling (rain transition)
     fragments.forEach((fragment) => {
       // Apply gravity
       fragment.velocity.y -= 0.015
@@ -190,6 +201,20 @@ const animate = () => {
     const allOffScreen = fragments.every((f) => f.mesh.position.y < -8)
     if (allOffScreen) {
       cleanupFragments()
+      isTransitioning.value = false
+    }
+  }
+
+  if (isTransitioning.value && slices.length > 0) {
+    // Animate slices moving horizontally
+    slices.forEach((slice) => {
+      slice.mesh.position.x += slice.velocity.x * slice.direction
+    })
+
+    // Check if all slices are off screen (beyond ±15 units)
+    const allOffScreen = slices.every((s) => Math.abs(s.mesh.position.x) > 15)
+    if (allOffScreen) {
+      cleanupSlices()
       isTransitioning.value = false
     }
   }
@@ -311,6 +336,80 @@ const cleanupFragments = () => {
   fragments.length = 0
 }
 
+const createSlices = (fromIndex: number) => {
+  const fromPlane = planes[fromIndex]
+
+  const fov = 75
+  const distance = 5
+  const webpageAspect = 16 / 9
+  const vFOV = (fov * Math.PI) / 180
+  const viewportHeight = 2 * Math.tan(vFOV / 2) * distance
+  const viewportWidth = viewportHeight * camera.aspect
+
+  let planeWidth: number
+  let planeHeight: number
+
+  if (camera.aspect > webpageAspect) {
+    planeHeight = viewportHeight
+    planeWidth = planeHeight * webpageAspect
+  } else {
+    planeWidth = viewportWidth
+    planeHeight = planeWidth / webpageAspect
+  }
+
+  const sliceHeight = planeHeight / NUM_SLICES
+
+  for (let i = 0; i < NUM_SLICES; i++) {
+    const geometry = new THREE.PlaneGeometry(planeWidth, sliceHeight)
+
+    // Calculate UV coordinates for this slice
+    const uvAttribute = geometry.attributes.uv
+    const vStart = 1 - (i + 1) / NUM_SLICES
+    const vEnd = 1 - i / NUM_SLICES
+
+    uvAttribute.setXY(0, 0, vEnd)
+    uvAttribute.setXY(1, 1, vEnd)
+    uvAttribute.setXY(2, 0, vStart)
+    uvAttribute.setXY(3, 1, vStart)
+
+    const material = new THREE.MeshBasicMaterial({
+      map: textures[fromIndex].clone(),
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 1,
+    })
+    material.map!.colorSpace = THREE.LinearSRGBColorSpace
+    material.map!.needsUpdate = true
+
+    const slice = new THREE.Mesh(geometry, material)
+
+    // Position slice at correct vertical location
+    const y = planeHeight / 2 - sliceHeight / 2 - i * sliceHeight
+    slice.position.set(0, y, fromPlane.position.z + 0.01)
+
+    // Alternate direction: even rows go right, odd rows go left
+    const direction = i % 2 === 0 ? 1 : -1
+    const velocity = new THREE.Vector3(0.15, 0, 0)
+
+    scene.add(slice)
+    slices.push({ mesh: slice, velocity, direction })
+  }
+}
+
+const cleanupSlices = () => {
+  slices.forEach((slice) => {
+    scene.remove(slice.mesh)
+    slice.mesh.geometry.dispose()
+    if (slice.mesh.material instanceof THREE.Material) {
+      if (slice.mesh.material.map) {
+        slice.mesh.material.map.dispose()
+      }
+      slice.mesh.material.dispose()
+    }
+  })
+  slices.length = 0
+}
+
 const transitionRain = async (targetIndex: number) => {
   if (isTransitioning.value || targetIndex === currentIndex.value) return
 
@@ -333,9 +432,29 @@ const transitionRain = async (targetIndex: number) => {
   // Transition will complete when fragments are off screen
 }
 
+const transitionSlice = async (targetIndex: number) => {
+  if (isTransitioning.value || targetIndex === currentIndex.value) return
+
+  isTransitioning.value = true
+  const fromIndex = currentIndex.value
+
+  planes[targetIndex].visible = true
+  createSlices(fromIndex)
+  planes[fromIndex].visible = false
+  currentIndex.value = targetIndex
+}
+
 const rotateWebview = () => {
   const nextIndex = (currentIndex.value + 1) % urls.length
-  transitionRain(nextIndex)
+
+  // Alternate between transition types
+  if (currentTransitionType === 'rain') {
+    transitionSlice(nextIndex)
+    currentTransitionType = 'slice'
+  } else {
+    transitionRain(nextIndex)
+    currentTransitionType = 'rain'
+  }
 }
 
 const refreshWebviews = async () => {
@@ -380,8 +499,9 @@ onUnmounted(() => {
   window.ipcRenderer.off('webview-frame', handleWebviewFrame)
   window.removeEventListener('resize', onWindowResize)
 
-  // Cleanup fragments
+  // Cleanup fragments and slices
   cleanupFragments()
+  cleanupSlices()
 
   // Cleanup Three.js
   if (renderer) {
@@ -397,7 +517,14 @@ onUnmounted(() => {
 })
 
 const handleDotClick = (index: number) => {
-  transitionRain(index)
+  // Use current transition type for manual clicks
+  if (currentTransitionType === 'rain') {
+    transitionRain(index)
+    currentTransitionType = 'slice'
+  } else {
+    transitionSlice(index)
+    currentTransitionType = 'rain'
+  }
 }
 </script>
 
@@ -417,7 +544,9 @@ const handleDotClick = (index: number) => {
     </div>
 
     <!-- Transition indicator -->
-    <div v-if="isTransitioning" class="transition-indicator">Transition 1: Rain</div>
+    <div v-if="isTransitioning" class="transition-indicator">
+      Transition {{ currentTransitionType === 'rain' ? '1: Rain' : '2: Slices' }}
+    </div>
   </div>
 </template>
 
