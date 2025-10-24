@@ -11,10 +11,18 @@ interface Slice {
 export class SliceTransition extends BaseTransition {
   private slices: Slice[] = []
   private readonly numSlices = 8
+  private sharedTexture: THREE.Texture | null = null
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width: planeWidth, height: planeHeight } = this.planeConfig
     const sliceHeight = planeHeight / this.numSlices
+
+    // Clone texture once for entire transition instead of 8 times
+    this.sharedTexture = this.textures[fromIndex]?.clone() || null
+    if (this.sharedTexture) {
+      this.sharedTexture.colorSpace = THREE.LinearSRGBColorSpace
+      this.sharedTexture.needsUpdate = true
+    }
 
     for (let i = 0; i < this.numSlices; i++) {
       const geometry = new THREE.PlaneGeometry(planeWidth, sliceHeight)
@@ -28,14 +36,13 @@ export class SliceTransition extends BaseTransition {
       uvAttribute?.setXY(2, 0, vStart)
       uvAttribute?.setXY(3, 1, vStart)
 
+      // Share the same texture across all slices
       const material = new THREE.MeshBasicMaterial({
-        map: this.textures[fromIndex]?.clone() || null,
+        map: this.sharedTexture,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 1,
       })
-      material.map!.colorSpace = THREE.LinearSRGBColorSpace
-      material.map!.needsUpdate = true
 
       const slice = new THREE.Mesh(geometry, material)
 
@@ -63,12 +70,16 @@ export class SliceTransition extends BaseTransition {
       this.scene.remove(slice.mesh)
       slice.mesh.geometry.dispose()
       if (slice.mesh.material instanceof THREE.Material) {
-        if (slice.mesh.material.map) {
-          slice.mesh.material.map.dispose()
-        }
+        // Don't dispose the shared texture here - we'll do it once below
         slice.mesh.material.dispose()
       }
     })
     this.slices.length = 0
+
+    // Dispose the shared texture once
+    if (this.sharedTexture) {
+      this.sharedTexture.dispose()
+      this.sharedTexture = null
+    }
   }
 }

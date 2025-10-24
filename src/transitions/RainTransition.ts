@@ -13,11 +13,19 @@ export class RainTransition extends BaseTransition {
   private fragments: Fragment[] = []
   private readonly gridCols = 20
   private readonly gridRows = 10
+  private sharedTexture: THREE.Texture | null = null
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width: planeWidth, height: planeHeight } = this.planeConfig
     const fragmentWidth = planeWidth / this.gridCols
     const fragmentHeight = planeHeight / this.gridRows
+
+    // Clone texture once for entire transition instead of 200 times
+    this.sharedTexture = this.textures[fromIndex]?.clone() || null
+    if (this.sharedTexture) {
+      this.sharedTexture.colorSpace = THREE.LinearSRGBColorSpace
+      this.sharedTexture.needsUpdate = true
+    }
 
     for (let row = 0; row < this.gridRows; row++) {
       for (let col = 0; col < this.gridCols; col++) {
@@ -36,14 +44,13 @@ export class RainTransition extends BaseTransition {
         uvAttribute?.setXY(2, uStart, vStart)
         uvAttribute?.setXY(3, uEnd, vStart)
 
+        // Share the same texture across all fragments
         const material = new THREE.MeshBasicMaterial({
-          map: this.textures[fromIndex]?.clone() || null,
+          map: this.sharedTexture,
           side: THREE.DoubleSide,
           transparent: true,
           opacity: 1,
         })
-        material.map!.colorSpace = THREE.LinearSRGBColorSpace
-        material.map!.needsUpdate = true
 
         const fragment = new THREE.Mesh(geometry, material)
 
@@ -102,12 +109,16 @@ export class RainTransition extends BaseTransition {
       this.scene.remove(fragment.mesh)
       fragment.mesh.geometry.dispose()
       if (fragment.mesh.material instanceof THREE.Material) {
-        if (fragment.mesh.material.map) {
-          fragment.mesh.material.map.dispose()
-        }
+        // Don't dispose the shared texture here - we'll do it once below
         fragment.mesh.material.dispose()
       }
     })
     this.fragments.length = 0
+
+    // Dispose the shared texture once
+    if (this.sharedTexture) {
+      this.sharedTexture.dispose()
+      this.sharedTexture = null
+    }
   }
 }
