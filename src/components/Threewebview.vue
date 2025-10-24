@@ -108,13 +108,14 @@ const animate = () => {
   if (store.isTransitioning && transitionManager) {
     const isComplete = transitionManager.update()
     if (isComplete) {
-      store.setTransitioning(false)
-      // After transition completes, update painting windows based on current state
+      // Visual transition is complete, but DON'T set isTransitioning to false here
+      // It will be set to false at the end of the transition() function
       const nextIdx = (store.currentIndex + 1) % urls.value.length
+      const nextNextIdx = (store.currentIndex + 2) % urls.value.length
       console.log(
-        `Transition complete. Current: ${store.currentIndex}, keeping painting for: ${store.currentIndex}, ${nextIdx}`,
+        `Transition complete. Current: ${store.currentIndex}, keeping painting for: ${store.currentIndex}, ${nextIdx}, ${nextNextIdx}`,
       )
-      updateActivePaintingWindows([store.currentIndex, nextIdx])
+      updateActivePaintingWindows([store.currentIndex, nextIdx, nextNextIdx])
     }
   }
 
@@ -131,9 +132,6 @@ const updateActivePaintingWindows = async (indices: number[]) => {
 const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
   // Guard against multiple transitions and transitioning to current page
   if (store.isTransitioning || targetIndex === store.currentIndex) {
-    console.log(
-      `Skipping transition to ${targetIndex}: isTransitioning=${store.isTransitioning}, current=${store.currentIndex}`,
-    )
     return
   }
 
@@ -162,36 +160,8 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
   const nextAfterTarget = (targetIndex + 1) % urls.value.length
   await updateActivePaintingWindows([fromIndex, targetIndex, nextAfterTarget])
 
-  // Wait and verify that target texture has received fresh frames
-  const maxWaitTime = 5000 // 5 seconds max
-  const startWait = Date.now()
-  const targetEnableTime = Date.now()
-  let textureReady = false
-
-  while (Date.now() - startWait < maxWaitTime && !textureReady) {
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    // Check if texture has valid image data AND has been updated since we enabled painting
-    const targetTexture = textures[targetIndex]
-    const lastUpdate = textureUpdateTimestamps.value.get(targetIndex) || 0
-    const hasRecentUpdate = lastUpdate > targetEnableTime
-
-    if (targetTexture && targetTexture.image && targetTexture.image.width > 0 && hasRecentUpdate) {
-      const timeSinceUpdate = Date.now() - lastUpdate
-      console.log(
-        `Texture ${targetIndex} ready with dimensions: ${targetTexture.image.width}x${targetTexture.image.height}, updated ${timeSinceUpdate}ms ago`,
-      )
-      textureReady = true
-    } else if (!hasRecentUpdate) {
-      console.log(
-        `Waiting for texture ${targetIndex} to receive fresh frames (last update: ${lastUpdate > 0 ? Date.now() - lastUpdate + 'ms ago' : 'never'})`,
-      )
-    }
-  }
-
-  if (!textureReady) {
-    console.warn(`Texture ${targetIndex} not ready after ${maxWaitTime}ms, proceeding anyway`)
-  }
+  // Give Electron 100ms to ensure painting is active
+  await new Promise((resolve) => setTimeout(resolve, 100))
 
   // Make target plane visible
   const targetPlane = planes[targetIndex]
@@ -212,6 +182,13 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
 
   // Hide the old plane
   fromPlane.visible = false
+
+  // Wait for the visual transition to complete (2.5s)
+  // Don't rely on animate() loop - wait here to ensure proper state management
+  await new Promise((resolve) => setTimeout(resolve, 2500))
+
+  // NOW set transitioning to false - after everything is truly complete
+  store.setTransitioning(false)
 }
 
 const rotateWebview = () => {
@@ -245,10 +222,9 @@ const checkAllTexturesLoaded = () => {
   if (loadedTextures.value.size === urls.value.length && !allTexturesLoaded.value) {
     allTexturesLoaded.value = true
     console.log('All textures loaded, starting slideshow')
-    // Keep current (0) and next (1) window painting
-    updateActivePaintingWindows([0, 1])
+    // Keep current (0), next (1), and next+1 (2) windows painting
+    updateActivePaintingWindows([0, 1, 2])
 
-    // Wait 2 seconds after loading to ensure windows have painted multiple frames
     setTimeout(() => {
       console.log('Starting rotation timer after texture warmup period')
       startTimers()
