@@ -34,6 +34,8 @@ interface Slice {
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const currentIndex = ref(0)
 const isTransitioning = ref(false)
+const setupMode = ref(true)
+const setupIndex = ref(0)
 
 // Three.js objects
 let scene: THREE.Scene
@@ -61,6 +63,26 @@ let rotationTimer: number | null = null
 // Refresh webviews periodically (every 30 seconds)
 const REFRESH_INTERVAL = 30000
 let refreshTimer: number | null = null
+
+const showSetupView = async (index: number) => {
+  setupIndex.value = index
+  await window.ipcRenderer.invoke('show-setup-view', index)
+}
+
+const nextSetupPage = () => {
+  const nextIndex = (setupIndex.value + 1) % urls.length
+  showSetupView(nextIndex)
+}
+
+const prevSetupPage = () => {
+  const prevIndex = (setupIndex.value - 1 + urls.length) % urls.length
+  showSetupView(prevIndex)
+}
+
+const finishSetup = async () => {
+  setupMode.value = false
+  await window.ipcRenderer.invoke('finish-setup')
+}
 
 const initThreeJS = () => {
   if (!canvasRef.value) return
@@ -464,6 +486,12 @@ const refreshWebviews = async () => {
   }
 }
 
+const handleSetupComplete = () => {
+  // Start timers after setup is complete
+  rotationTimer = window.setInterval(rotateWebview, ROTATION_INTERVAL)
+  refreshTimer = window.setInterval(refreshWebviews, REFRESH_INTERVAL)
+}
+
 onMounted(async () => {
   // Get URLs from main process
   urls = await window.ipcRenderer.invoke('get-webview-urls')
@@ -479,11 +507,8 @@ onMounted(async () => {
     console.log(`Webview ${data.index} loaded: ${data.url}`)
   })
 
-  // Start rotation timer
-  rotationTimer = window.setInterval(rotateWebview, ROTATION_INTERVAL)
-
-  // Start refresh timer
-  refreshTimer = window.setInterval(refreshWebviews, REFRESH_INTERVAL)
+  // Listen for setup complete
+  window.ipcRenderer.on('setup-complete', handleSetupComplete)
 })
 
 onUnmounted(() => {
@@ -497,6 +522,7 @@ onUnmounted(() => {
 
   // Remove event listeners
   window.ipcRenderer.off('webview-frame', handleWebviewFrame)
+  window.ipcRenderer.off('setup-complete', handleSetupComplete)
   window.removeEventListener('resize', onWindowResize)
 
   // Cleanup fragments and slices
@@ -530,10 +556,38 @@ const handleDotClick = (index: number) => {
 
 <template>
   <div class="webview-3d-container">
-    <canvas ref="canvasRef" class="three-canvas"></canvas>
+    <!-- Setup Mode Control Bar (at bottom) -->
+    <div v-if="setupMode" class="setup-control-bar">
+      <div class="setup-content">
+        <div class="setup-info">
+          <h2>Setup Mode</h2>
+          <p>Page {{ setupIndex + 1 }} of {{ urls.length }} - Log in to your pages above</p>
+        </div>
+        <div class="setup-controls">
+          <button class="control-btn" @click="prevSetupPage" title="Previous page">
+            <span>←</span>
+          </button>
+          <button class="control-btn finish-btn" @click="finishSetup">Start Slideshow</button>
+          <button class="control-btn" @click="nextSetupPage" title="Next page">
+            <span>→</span>
+          </button>
+        </div>
+        <div class="setup-dots">
+          <div
+            v-for="(_, index) in urls.length"
+            :key="index"
+            class="setup-dot"
+            :class="{ active: setupIndex === index }"
+            @click="showSetupView(index)"
+          ></div>
+        </div>
+      </div>
+    </div>
+
+    <canvas ref="canvasRef" class="three-canvas" :class="{ hidden: setupMode }"></canvas>
 
     <!-- Display current page indicator -->
-    <div class="indicator">
+    <div v-if="!setupMode" class="indicator">
       <div
         v-for="(_, index) in urls.length"
         :key="index"
@@ -544,7 +598,7 @@ const handleDotClick = (index: number) => {
     </div>
 
     <!-- Transition indicator -->
-    <div v-if="isTransitioning" class="transition-indicator">
+    <div v-if="isTransitioning && !setupMode" class="transition-indicator">
       Transition {{ currentTransitionType === 'rain' ? '1: Rain' : '2: Slices' }}
     </div>
   </div>
@@ -563,6 +617,121 @@ const handleDotClick = (index: number) => {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.three-canvas.hidden {
+  display: none;
+}
+
+.setup-control-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setup-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 40px;
+}
+
+.setup-info {
+  flex: 1;
+  color: white;
+}
+
+.setup-info h2 {
+  font-size: 20px;
+  font-weight: 500;
+  margin-bottom: 5px;
+  color: #fff;
+}
+
+.setup-info p {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+}
+
+.setup-controls {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.control-btn {
+  padding: 12px 24px;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-weight: 500;
+}
+
+.control-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+.control-btn span {
+  font-size: 20px;
+  display: block;
+}
+
+.finish-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  padding: 12px 32px;
+  font-size: 16px;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.finish-btn:hover {
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+  transform: translateY(-2px);
+}
+
+.setup-dots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 20px;
+}
+
+.setup-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.3);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.setup-dot:hover {
+  background-color: rgba(255, 255, 255, 0.6);
+  transform: scale(1.2);
+}
+
+.setup-dot.active {
+  background-color: rgba(255, 255, 255, 1);
+  transform: scale(1.3);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
 }
 
 .indicator {
