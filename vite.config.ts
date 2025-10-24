@@ -8,7 +8,14 @@ import renderer from 'vite-plugin-electron-renderer'
 
 export default defineConfig({
   plugins: [
-    vue(),
+    vue({
+      template: {
+        compilerOptions: {
+          // Treat webview as a custom element (Electron webview tag)
+          isCustomElement: (tag) => tag === 'webview',
+        },
+      },
+    }),
     vueDevTools(),
     electron([
       {

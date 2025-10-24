@@ -24,6 +24,7 @@ const ROTATION_INTERVAL = 10000
 
 const currentIndex = ref(0)
 const webviewRefs = ref<(WebviewElement | null)[]>([])
+const loadingStates = ref<boolean[]>(urls.map(() => true))
 let rotationTimer: number | null = null
 
 const setWebviewRef = (index: number) => (el: unknown) => {
@@ -40,19 +41,19 @@ onMounted(() => {
     if (webview) {
       webview.addEventListener('did-start-loading', () => {
         console.log(`Webview ${index} started loading`)
+        loadingStates.value[index] = true
       })
 
       webview.addEventListener('did-stop-loading', () => {
         console.log(`Webview ${index} finished loading`)
+        loadingStates.value[index] = false
       })
 
       webview.addEventListener('did-fail-load', (event?: Event) => {
         const failEvent = event as DidFailLoadEvent
         console.error(`Webview ${index} failed to load:`, failEvent.errorDescription)
+        loadingStates.value[index] = false
       })
-
-      // Load initial URL
-      webview.src = urls[index] || ''
     }
   })
 
@@ -76,16 +77,28 @@ onUnmounted(() => {
       class="webview-wrapper"
       :class="{ active: currentIndex === index }"
     >
-      <webview :ref="setWebviewRef(index)" class="webview"></webview>
+      <!-- Set src directly in template for immediate loading -->
+      <webview
+        :ref="setWebviewRef(index)"
+        :src="url"
+        class="webview"
+        webpreferences="backgroundThrottling=false"
+      ></webview>
+
+      <!-- Optional: Loading indicator -->
+      <div v-if="loadingStates[index] && currentIndex === index" class="loading-indicator">
+        Loading...
+      </div>
     </div>
 
-    <!-- Optional: Display current page indicator -->
+    <!-- Display current page indicator -->
     <div class="indicator">
       <div
         v-for="(url, index) in urls"
         :key="index"
         class="dot"
         :class="{ active: currentIndex === index }"
+        @click="currentIndex = index"
       ></div>
     </div>
   </div>
@@ -121,6 +134,19 @@ onUnmounted(() => {
   height: 100%;
 }
 
+.loading-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 20px 40px;
+  border-radius: 10px;
+  font-size: 18px;
+  z-index: 2;
+}
+
 .indicator {
   position: absolute;
   bottom: 20px;
@@ -140,6 +166,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background-color: rgba(255, 255, 255, 0.5);
   transition: background-color 0.3s ease;
+  cursor: pointer;
 }
 
 .dot.active {
