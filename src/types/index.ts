@@ -32,10 +32,10 @@ export interface CameraConfig {
 
 export interface TransitionConfig {
   duration: number
-  type: 'rain' | 'slice'
+  type: 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
 }
 
-export type TransitionType = 'rain' | 'slice'
+export type TransitionType = 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
 
 export interface IPCRenderer {
   on: (channel: string, callback: (...args: any[]) => void) => void

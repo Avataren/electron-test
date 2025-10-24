@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 
 // Define TransitionType locally to avoid import issues
-type TransitionType = 'rain' | 'slice'
+type TransitionType = 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
 
 export const useWebviewStore = defineStore('webview', () => {
   const currentIndex = ref(0)
@@ -10,6 +10,18 @@ export const useWebviewStore = defineStore('webview', () => {
   const setupMode = ref(true)
   const setupIndex = ref(0)
   const currentTransitionType = ref<TransitionType>('rain')
+  const currentTransitionIndex = ref(0)
+
+  // All available transition types
+  const transitionTypes: TransitionType[] = [
+    'rain',
+    'slice',
+    'pixelate',
+    'ripple',
+    'flip',
+    'glitch',
+    'swirl',
+  ]
 
   const nextIndex = computed(() => (index: number, total: number) => (index + 1) % total)
   const prevIndex = computed(() => (index: number, total: number) => (index - 1 + total) % total)
@@ -31,7 +43,13 @@ export const useWebviewStore = defineStore('webview', () => {
   }
 
   function toggleTransitionType() {
-    currentTransitionType.value = currentTransitionType.value === 'rain' ? 'slice' : 'rain'
+    currentTransitionIndex.value = (currentTransitionIndex.value + 1) % transitionTypes.length
+    currentTransitionType.value = transitionTypes[currentTransitionIndex.value]
+  }
+
+  function getNextTransitionType(): TransitionType {
+    const nextIdx = (currentTransitionIndex.value + 1) % transitionTypes.length
+    return transitionTypes[nextIdx]
   }
 
   function nextSetupPage(totalPages: number) {
@@ -55,6 +73,7 @@ export const useWebviewStore = defineStore('webview', () => {
     setSetupMode,
     setSetupIndex,
     toggleTransitionType,
+    getNextTransitionType,
     nextSetupPage,
     prevSetupPage,
   }

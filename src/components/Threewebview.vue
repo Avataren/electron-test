@@ -161,7 +161,7 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
   await updateActivePaintingWindows([fromIndex, targetIndex, nextAfterTarget])
 
   // Give Electron 100ms to ensure painting is active
-  await new Promise((resolve) => setTimeout(resolve, 100))
+  await new Promise((resolve) => setTimeout(resolve, 200))
 
   // Make target plane visible
   const targetPlane = planes[targetIndex]
