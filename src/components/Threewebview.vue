@@ -15,6 +15,7 @@ const loadedTextures = ref<Set<number>>(new Set())
 const allTexturesLoaded = ref(false)
 const loadingProgress = ref(0)
 const textureUpdateTimestamps = ref<Map<number, number>>(new Map())
+const isInitialLoading = ref(true) // NEW: Track if we're in initial loading phase
 
 const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
@@ -23,8 +24,6 @@ let transitionManager: TransitionManager | null = null
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
 
-// Track the page aspect ratio (width / height) reported by the webviews so
-// plane sizing and resizes preserve the source aspect for 1:1 rendering.
 const pageAspect = ref<number | null>(null)
 
   const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
@@ -32,6 +31,21 @@ const pageAspect = ref<number | null>(null)
   async (index: number, size?: { width: number; height: number; backingWidth?: number; backingHeight?: number }) => {
     // Update timestamp when texture receives new frame
     textureUpdateTimestamps.value.set(index, Date.now())
+
+    // FIXED: Mark texture as loaded when we receive first frame (during initial loading)
+    if (isInitialLoading.value && !store.setupMode && !loadedTextures.value.has(index)) {
+      console.log(`Texture ${index} received first frame and applied to THREE.Texture`)
+      loadedTextures.value.add(index)
+      checkAllTexturesLoaded()
+      // Continue to skip resize operations during initial loading
+      return
+    }
+
+    // Skip resize operations during initial loading to prevent interrupting texture load
+    if (isInitialLoading.value) {
+      console.debug('[Threewebview] Skipping resize during initial loading', { index })
+      return
+    }
 
     // If we have a reported page size, compute its aspect and ensure planes
     // and planeConfig match that aspect. Update whenever the reported page
@@ -135,6 +149,7 @@ const finishSetup = async () => {
   loadedTextures.value.clear()
   allTexturesLoaded.value = false
   loadingProgress.value = 0
+  isInitialLoading.value = true // FIXED: Reset initial loading flag
   await window.ipcRenderer.invoke('finish-setup')
 }
 
@@ -190,8 +205,11 @@ const isResizing = ref(false)
 
 const handleResize = async () => {
   // Prevent concurrent resize operations
-  if (isResizing.value || store.isTransitioning) {
-    console.log('Skipping resize: ' + (isResizing.value ? 'resize in progress' : 'transition in progress'))
+  if (isResizing.value || store.isTransitioning || isInitialLoading.value) {
+    console.log('Skipping resize: ' +
+      (isResizing.value ? 'resize in progress' :
+       store.isTransitioning ? 'transition in progress' :
+       'initial loading in progress'))
     return
   }
 
@@ -441,6 +459,7 @@ const refreshWebviews = async () => {
 const checkAllTexturesLoaded = () => {
   if (loadedTextures.value.size === urls.value.length && !allTexturesLoaded.value) {
     allTexturesLoaded.value = true
+    isInitialLoading.value = false // FIXED: Mark initial loading as complete
     console.log('All textures loaded, starting slideshow')
     // Keep current (0), next (1), and next+1 (2) windows painting
     updateActivePaintingWindows([0, 1, 2])
@@ -464,34 +483,6 @@ const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) 
   console.log(`Webview ${data.index} page loaded: ${data.url}`)
 }
 
-const handleWebviewFrame = (_event: any, data: any) => {
-  const { index } = data
-
-  // Only mark as loaded when we receive the FIRST frame AND the texture
-  // has actually been updated with an image. Previously we marked loaded
-  // as soon as an IPC frame arrived which could be ignored by the
-  // composable (size mismatch) — resulting in the slideshow starting with
-  // black textures.
-  const tex = textures[index]
-  // Allow a one-line explicit-any here because THREE.Texture's `source` has
-  // internal typings we don't need to import; we only want to check for the
-  // presence of `.data.width` safely.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const hasImage = !!(tex && (tex.image || ((tex.source as any)?.data && (tex.source as any).data.width)))
-
-  if (!store.setupMode && !loadedTextures.value.has(index) && hasImage) {
-    console.log(`Texture ${index} received first frame (applied to THREE.Texture)`)
-    loadedTextures.value.add(index)
-    checkAllTexturesLoaded()
-    return
-  }
-
-  // Helpful debug when frames arrive but composable hasn't applied them yet
-  if (!hasImage) {
-    console.debug(`[Threewebview] frame arrived for index ${index} but texture not set yet`)
-  }
-}
-
 const { startTimers, stopTimers } = useRotationTimer(rotateWebview, refreshWebviews)
 
 const handleDotClick = (index: number) => {
@@ -513,7 +504,8 @@ onMounted(async () => {
   createPlanes()
   animate()
 
-  window.ipcRenderer.on('webview-frame', handleWebviewFrame)
+  // Only register the webview-loaded handler here
+  // webview-frame is handled by the composable via setupListeners()
   window.ipcRenderer.on('webview-loaded', handleWebviewLoaded)
   setupListeners()
 
@@ -526,7 +518,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopTimers()
-  window.ipcRenderer.off('webview-frame', handleWebviewFrame)
+  // webview-frame is cleaned up by removeListeners()
   window.ipcRenderer.off('webview-loaded', handleWebviewLoaded)
   removeListeners()
   window.removeEventListener('resize', handleResize)
