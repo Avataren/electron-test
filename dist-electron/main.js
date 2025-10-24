@@ -251,6 +251,25 @@ class OffscreenRenderer {
       window.webContents.reload();
     }
   }
+  /**
+   * Resize a specific offscreen window. Width/height should be in device
+   * pixels (DIP). This triggers a repaint at the new size which will be
+   * emitted via the 'paint' event.
+   */
+  resize(index, width, height) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed()) {
+      window.setSize(width, height);
+    }
+  }
+  /** Resize all offscreen windows to the provided dimensions. */
+  resizeAll(width, height) {
+    this.windows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.setSize(width, height);
+      }
+    });
+  }
   navigate(index, url) {
     const window = this.windows.get(index);
     if (window && !window.isDestroyed()) {
@@ -304,6 +323,9 @@ class IPCHandlers {
     });
     ipcMain.handle("set-active-painting-windows", (event, indices) => {
       this.offscreenRenderer.setActivePaintingWindows(indices);
+    });
+    ipcMain.handle("resize-offscreen-windows", (event, width, height) => {
+      this.offscreenRenderer.resizeAll(width, height);
     });
     ipcMain.handle("enable-painting", (event, index) => {
       this.offscreenRenderer.enablePainting(index);

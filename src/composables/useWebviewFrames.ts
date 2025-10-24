@@ -11,12 +11,13 @@ interface WebviewFrame {
 
 export function useWebviewFrames(
   textures: THREE.Texture[],
-  onTextureUpdate?: (index: number) => void,
+  // called with index and the reported page size {width,height}
+  onTextureUpdate?: (index: number, size?: { width: number; height: number }) => void,
 ) {
   const urls = ref<string[]>([])
 
   const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
-    const { index, buffer } = data
+    const { index, buffer, size } = data
 
     const texture = textures[index]
     if (!texture) {
@@ -31,14 +32,44 @@ export function useWebviewFrames(
 
     const img = new Image()
     img.onload = () => {
-      // Only update texture when we have valid image data
-      texture.image = img
-      texture.needsUpdate = true
-      URL.revokeObjectURL(url)
+      try {
+        // Create a canvas exactly the size of the webpage to ensure the
+        // texture has the same dimensions as the source page.
+        const pageWidth = size?.width || img.naturalWidth || img.width
+        const pageHeight = size?.height || img.naturalHeight || img.height
 
-      // Notify that texture was updated
-      if (onTextureUpdate) {
-        onTextureUpdate(index)
+        const canvas = document.createElement('canvas')
+        canvas.width = pageWidth
+        canvas.height = pageHeight
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          // Draw the loaded image into the canvas at full size
+          ctx.imageSmoothingEnabled = false
+          ctx.clearRect(0, 0, canvas.width, canvas.height)
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+          // Assign the canvas as the texture image so the texture has exact page dims
+          texture.image = canvas as any
+        } else {
+          // Fallback: use the Image directly
+          texture.image = img as any
+        }
+
+        // Use nearest filtering to keep pixels exact and disable mipmaps
+        texture.minFilter = THREE.NearestFilter
+        texture.magFilter = THREE.NearestFilter
+        texture.generateMipmaps = false
+        texture.needsUpdate = true
+
+        URL.revokeObjectURL(url)
+
+        // Notify that texture was updated and provide page size
+        if (onTextureUpdate) {
+          onTextureUpdate(index, { width: pageWidth, height: pageHeight })
+        }
+      } catch (err) {
+        console.error('Error updating texture from webview frame', err)
+        URL.revokeObjectURL(url)
       }
     }
     img.onerror = () => {

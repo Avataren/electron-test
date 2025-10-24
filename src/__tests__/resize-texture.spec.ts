@@ -1,0 +1,119 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import * as THREE from 'three'
+import { useWebviewFrames } from '../composables/useWebviewFrames'
+
+describe('useWebviewFrames resize handling', () => {
+  let originalCreateElement: any
+  let originalImage: any
+  let originalURL: any
+  let originalWindow: any
+
+  beforeEach(() => {
+    // Mock document.createElement('canvas') to return a simple canvas-like object
+    originalCreateElement = document.createElement
+    document.createElement = (tag: string) => {
+      if (tag === 'canvas') {
+        const canvas: any = {
+          width: 0,
+          height: 0,
+          getContext: (ctx: string) => {
+            if (ctx === '2d') {
+              return {
+                imageSmoothingEnabled: true,
+                clearRect: () => {},
+                drawImage: () => {},
+              }
+            }
+            return null
+          },
+        }
+        return canvas as unknown as HTMLElement
+      }
+      return originalCreateElement.call(document, tag)
+    }
+
+    // Mock Image to call onload synchronously and provide natural sizes
+    originalImage = (global as any).Image
+    class MockImage {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      naturalWidth = 1024
+      naturalHeight = 768
+      set src(_s: string) {
+        // simulate load
+        if (this.onload) this.onload()
+      }
+    }
+    ;(global as any).Image = MockImage
+
+    // Mock URL.createObjectURL / revokeObjectURL
+    originalURL = (global as any).URL
+    ;(global as any).URL = {
+      createObjectURL: (_: any) => 'blob:mock',
+      revokeObjectURL: (_: any) => {},
+    }
+
+    // Mock window.ipcRenderer to capture handlers
+    originalWindow = (global as any).window
+    ;(global as any).window = {
+      ipcRenderer: {
+        handlers: new Map<string, Function>(),
+        on: function (name: string, cb: Function) {
+          this.handlers.set(name, cb)
+        },
+        off: function (name: string, cb: Function) {
+          this.handlers.delete(name)
+        },
+        invoke: vi.fn(),
+      },
+    }
+  })
+
+  afterEach(() => {
+    document.createElement = originalCreateElement
+    ;(global as any).Image = originalImage
+    ;(global as any).URL = originalURL
+    ;(global as any).window = originalWindow
+    vi.restoreAllMocks()
+  })
+
+  it('creates a canvas-matched texture image and sets nearest filtering', async () => {
+    const textures: THREE.Texture[] = []
+    const tex = new THREE.Texture()
+    textures.push(tex)
+
+    let callbackCalled = false
+    const onTextureUpdate = (index: number, size?: { width: number; height: number }) => {
+      callbackCalled = true
+      expect(index).toBe(0)
+      expect(size).toBeDefined()
+      expect(size?.width).toBe(800)
+      expect(size?.height).toBe(600)
+    }
+
+    const { setupListeners } = useWebviewFrames(textures, onTextureUpdate)
+    setupListeners()
+
+    // Simulate sending a 'webview-frame' event from main with a size
+    const handler = (window as any).ipcRenderer.handlers.get('webview-frame')
+    expect(handler).toBeDefined()
+
+    // Create a fake buffer (its contents aren't used because Image is mocked)
+    const fakeBuffer = new Uint8Array([1, 2, 3])
+
+    // Call the handler
+    handler(null, { index: 0, buffer: fakeBuffer, size: { width: 800, height: 600 } })
+
+    // After handler runs, texture.image should be the canvas we created
+    expect(callbackCalled).toBe(true)
+    expect(textures[0].image).toBeDefined()
+    // The mocked canvas stores width/height
+    expect((textures[0].image as any).width).toBe(800)
+    expect((textures[0].image as any).height).toBe(600)
+
+    // Check texture filtering
+    expect(textures[0].minFilter).toBe(THREE.NearestFilter)
+    expect(textures[0].magFilter).toBe(THREE.NearestFilter)
+    expect(textures[0].generateMipmaps).toBe(false)
+  })
+})

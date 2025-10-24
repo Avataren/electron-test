@@ -24,9 +24,41 @@ const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
 
 const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
   textures,
-  (index: number) => {
+  (index: number, size?: { width: number; height: number }) => {
     // Update timestamp when texture receives new frame
     textureUpdateTimestamps.value.set(index, Date.now())
+
+    // On first valid frame we may receive the page dimensions. Resize the
+    // plane geometry to match the webpage aspect so the texture maps 1:1
+    // to the visual plane. Use the first received page size (assumes pages
+    // share the same dimensions). This keeps the displayed content crisp
+    // when using nearest filtering.
+    if (size && camera.value && planes.length > 0) {
+      // Only run once (first texture that reports size)
+      if (!planes[0].userData.pageSized) {
+        const pageAspect = size.width / size.height
+        const newPlaneConfig = calculatePlaneSize(
+          {
+            fov: FOV,
+            distance: DISTANCE,
+            aspect: camera.value.aspect,
+          },
+          pageAspect,
+        )
+
+        planes.forEach((plane) => {
+          plane.geometry.dispose()
+          plane.geometry = new THREE.PlaneGeometry(newPlaneConfig.width, newPlaneConfig.height)
+        })
+
+        if (transitionManager) {
+          transitionManager.updatePlaneConfig(newPlaneConfig)
+        }
+
+        // Mark as done so we don't repeatedly resize
+        planes[0].userData.pageSized = true
+      }
+    }
   },
 )
 
@@ -66,10 +98,12 @@ const createPlanes = () => {
   const planeGeometry = new THREE.PlaneGeometry(planeConfig.width, planeConfig.height)
 
   urls.value.forEach((url, index) => {
-    const texture = new THREE.Texture()
-    texture.minFilter = THREE.LinearFilter
-    texture.magFilter = THREE.LinearFilter
-    texture.colorSpace = THREE.LinearSRGBColorSpace
+  const texture = new THREE.Texture()
+  // Use nearest filtering to keep page pixels exact and avoid smoothing
+  texture.minFilter = THREE.NearestFilter
+  texture.magFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  texture.colorSpace = THREE.LinearSRGBColorSpace
     textures.push(texture)
 
     const material = new THREE.MeshBasicMaterial({
@@ -99,6 +133,24 @@ const handleResize = () => {
 
   if (transitionManager) {
     transitionManager.updatePlaneConfig(newPlaneConfig)
+  }
+
+  // Ensure offscreen windows are resized to match the renderer pixel size so
+  // that subsequent 'paint' events produce textures at the new resolution.
+  // Use devicePixelRatio to convert CSS pixels to device pixels.
+  try {
+    const pixelWidth = Math.round(window.innerWidth * window.devicePixelRatio)
+    const pixelHeight = Math.round(window.innerHeight * window.devicePixelRatio)
+
+    // Resize offscreen windows in the main process
+    window.ipcRenderer.invoke('resize-offscreen-windows', pixelWidth, pixelHeight)
+
+    // Re-enable painting for the active set so they emit fresh frames at
+    // the new size. Keep current, next and next+1 painting like initial logic.
+    const active = [store.currentIndex, (store.currentIndex + 1) % planes.length, (store.currentIndex + 2) % planes.length]
+    updateActivePaintingWindows(active)
+  } catch (err) {
+    console.warn('Failed to request offscreen resize:', err)
   }
 }
 
@@ -183,9 +235,35 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
   // Hide the old plane
   fromPlane.visible = false
 
-  // Wait for the visual transition to complete (2.5s)
-  // Don't rely on animate() loop - wait here to ensure proper state management
-  await new Promise((resolve) => setTimeout(resolve, 2500))
+  // Wait for the visual transition to complete.
+  // Previously we used a fixed 2.5s timeout which could desync with the
+  // actual transition duration (framerate drops or different transition
+  // timings) and leave residues on the destination image. Instead poll
+  // the TransitionManager for completion with a sensible fallback timeout.
+  await new Promise<void>((resolve) => {
+    const maxWait = 10000 // 10s fallback to avoid hanging forever
+    const interval = 100
+    let waited = 0
+
+    const check = () => {
+      // If transitionManager is missing for some reason, stop waiting
+      if (!transitionManager) return resolve()
+
+      if (!transitionManager.hasActiveTransition()) {
+        return resolve()
+      }
+
+      waited += interval
+      if (waited >= maxWait) {
+        console.warn('Transition wait timed out after', maxWait, 'ms')
+        return resolve()
+      }
+
+      setTimeout(check, interval)
+    }
+
+    check()
+  })
 
   // NOW set transitioning to false - after everything is truly complete
   store.setTransitioning(false)

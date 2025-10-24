@@ -104,6 +104,27 @@ export class OffscreenRenderer {
     }
   }
 
+  /**
+   * Resize a specific offscreen window. Width/height should be in device
+   * pixels (DIP). This triggers a repaint at the new size which will be
+   * emitted via the 'paint' event.
+   */
+  resize(index: number, width: number, height: number): void {
+    const window = this.windows.get(index)
+    if (window && !window.isDestroyed()) {
+      window.setSize(width, height)
+    }
+  }
+
+  /** Resize all offscreen windows to the provided dimensions. */
+  resizeAll(width: number, height: number): void {
+    this.windows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.setSize(width, height)
+      }
+    })
+  }
+
   navigate(index: number, url: string): void {
     const window = this.windows.get(index)
     if (window && !window.isDestroyed()) {

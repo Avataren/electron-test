@@ -12,7 +12,7 @@ export interface CameraConfig {
 
 export const VIEWPORT_ASPECT = 16 / 9
 
-export function calculatePlaneSize(camera: CameraConfig): PlaneConfig {
+export function calculatePlaneSize(camera: CameraConfig, contentAspect = VIEWPORT_ASPECT): PlaneConfig {
   const { fov, distance, aspect } = camera
   const vFOV = (fov * Math.PI) / 180
   const viewportHeight = 2 * Math.tan(vFOV / 2) * distance
@@ -21,14 +21,15 @@ export function calculatePlaneSize(camera: CameraConfig): PlaneConfig {
   let planeWidth: number
   let planeHeight: number
 
-  if (aspect > VIEWPORT_ASPECT) {
+  // Use contentAspect (webpage aspect) to determine letterboxing/pillarboxing
+  if (aspect > contentAspect) {
     // Pillarboxing (fit to height)
     planeHeight = viewportHeight
-    planeWidth = planeHeight * VIEWPORT_ASPECT
+    planeWidth = planeHeight * contentAspect
   } else {
     // Letterboxing (fit to width)
     planeWidth = viewportWidth
-    planeHeight = planeWidth / VIEWPORT_ASPECT
+    planeHeight = planeWidth / contentAspect
   }
 
   return { width: planeWidth, height: planeHeight }
