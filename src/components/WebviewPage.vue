@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 // Define interface for Electron webview element
 interface WebviewElement extends HTMLElement {
   src: string
-  loadURL: (url: string) => void
-  goBack: () => void
-  goForward: () => void
-  reload: () => void
-  canGoBack: () => boolean
-  canGoForward: () => boolean
   addEventListener: (event: string, callback: (event?: Event) => void) => void
 }
 
@@ -17,145 +11,138 @@ interface DidFailLoadEvent extends Event {
   errorDescription: string
 }
 
-const url = ref('https://cubed.no')
-const webviewRef = ref<WebviewElement | null>(null)
-const isLoading = ref(true)
-const canGoBack = ref(false)
-const canGoForward = ref(false)
+// List of URLs to rotate through
+const urls = [
+  'https://cubed.no',
+  'https://www.github.com',
+  'https://www.wikipedia.org',
+  'https://news.ycombinator.com',
+]
 
-const loadUrl = () => {
-  if (webviewRef.value) {
-    webviewRef.value.loadURL(url.value)
-  }
+// Rotation interval in milliseconds (10 seconds)
+const ROTATION_INTERVAL = 10000
+
+const currentIndex = ref(0)
+const webviewRefs = ref<(WebviewElement | null)[]>([])
+let rotationTimer: number | null = null
+
+const setWebviewRef = (index: number) => (el: unknown) => {
+  webviewRefs.value[index] = el as WebviewElement | null
 }
 
-const goBack = () => {
-  if (webviewRef.value) {
-    webviewRef.value.goBack()
-  }
-}
-
-const goForward = () => {
-  if (webviewRef.value) {
-    webviewRef.value.goForward()
-  }
-}
-
-const reload = () => {
-  if (webviewRef.value) {
-    webviewRef.value.reload()
-  }
+const rotateWebview = () => {
+  currentIndex.value = (currentIndex.value + 1) % urls.length
 }
 
 onMounted(() => {
-  const webview = webviewRef.value
-  if (webview) {
-    webview.addEventListener('did-start-loading', () => {
-      isLoading.value = true
-    })
+  // Set up event listeners for all webviews
+  webviewRefs.value.forEach((webview, index) => {
+    if (webview) {
+      webview.addEventListener('did-start-loading', () => {
+        console.log(`Webview ${index} started loading`)
+      })
 
-    webview.addEventListener('did-stop-loading', () => {
-      isLoading.value = false
-      canGoBack.value = webview.canGoBack()
-      canGoForward.value = webview.canGoForward()
-    })
+      webview.addEventListener('did-stop-loading', () => {
+        console.log(`Webview ${index} finished loading`)
+      })
 
-    webview.addEventListener('did-fail-load', (event?: Event) => {
-      const failEvent = event as DidFailLoadEvent
-      console.error('Failed to load:', failEvent.errorDescription)
-      isLoading.value = false
-    })
+      webview.addEventListener('did-fail-load', (event?: Event) => {
+        const failEvent = event as DidFailLoadEvent
+        console.error(`Webview ${index} failed to load:`, failEvent.errorDescription)
+      })
 
-    // Load initial URL
-    webview.src = url.value
+      // Load initial URL
+      webview.src = urls[index] || ''
+    }
+  })
+
+  // Start rotation timer
+  rotationTimer = window.setInterval(rotateWebview, ROTATION_INTERVAL)
+})
+
+onUnmounted(() => {
+  // Clear rotation timer
+  if (rotationTimer !== null) {
+    clearInterval(rotationTimer)
   }
 })
 </script>
 
 <template>
   <div class="webview-container">
-    <div class="toolbar">
-      <button @click="goBack" :disabled="!canGoBack" class="nav-btn">←</button>
-      <button @click="goForward" :disabled="!canGoForward" class="nav-btn">→</button>
-      <button @click="reload" class="nav-btn">⟳</button>
-      <input
-        v-model="url"
-        @keyup.enter="loadUrl"
-        type="text"
-        placeholder="Enter URL..."
-        class="url-input"
-      />
-      <button @click="loadUrl" class="go-btn">Go</button>
-      <span v-if="isLoading" class="loading">Loading...</span>
+    <div
+      v-for="(url, index) in urls"
+      :key="index"
+      class="webview-wrapper"
+      :class="{ active: currentIndex === index }"
+    >
+      <webview :ref="setWebviewRef(index)" class="webview"></webview>
     </div>
-    <webview ref="webviewRef" class="webview"></webview>
+
+    <!-- Optional: Display current page indicator -->
+    <div class="indicator">
+      <div
+        v-for="(url, index) in urls"
+        :key="index"
+        class="dot"
+        :class="{ active: currentIndex === index }"
+      ></div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .webview-container {
-  display: flex;
-  flex-direction: column;
+  position: relative;
   height: 100vh;
   width: 100%;
+  overflow: hidden;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  padding: 10px;
-  background-color: #f5f5f5;
-  border-bottom: 1px solid #ddd;
-  gap: 8px;
+.webview-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.5s ease-in-out;
 }
 
-.nav-btn {
-  padding: 8px 12px;
-  background-color: #fff;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-}
-
-.nav-btn:hover:not(:disabled) {
-  background-color: #e9e9e9;
-}
-
-.nav-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.url-input {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 14px;
-}
-
-.go-btn {
-  padding: 8px 16px;
-  background-color: #4caf50;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.go-btn:hover {
-  background-color: #45a049;
-}
-
-.loading {
-  font-size: 12px;
-  color: #666;
+.webview-wrapper.active {
+  opacity: 1;
+  visibility: visible;
+  z-index: 1;
 }
 
 .webview {
-  flex: 1;
   width: 100%;
+  height: 100%;
+}
+
+.indicator {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 10px 20px;
+  border-radius: 20px;
+  z-index: 10;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.5);
+  transition: background-color 0.3s ease;
+}
+
+.dot.active {
+  background-color: rgba(255, 255, 255, 1);
 }
 </style>
