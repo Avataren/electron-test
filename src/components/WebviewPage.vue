@@ -1,42 +1,54 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 
+// Define interface for Electron webview element
+interface WebviewElement extends HTMLElement {
+  src: string
+  loadURL: (url: string) => void
+  goBack: () => void
+  goForward: () => void
+  reload: () => void
+  canGoBack: () => boolean
+  canGoForward: () => boolean
+  addEventListener: (event: string, callback: (event?: Event) => void) => void
+}
+
+interface DidFailLoadEvent extends Event {
+  errorDescription: string
+}
+
 const url = ref('https://example.com')
-const webviewRef = ref<HTMLElement | null>(null)
+const webviewRef = ref<WebviewElement | null>(null)
 const isLoading = ref(true)
 const canGoBack = ref(false)
 const canGoForward = ref(false)
 
 const loadUrl = () => {
   if (webviewRef.value) {
-    const webview = webviewRef.value as any
-    webview.loadURL(url.value)
+    webviewRef.value.loadURL(url.value)
   }
 }
 
 const goBack = () => {
   if (webviewRef.value) {
-    const webview = webviewRef.value as any
-    webview.goBack()
+    webviewRef.value.goBack()
   }
 }
 
 const goForward = () => {
   if (webviewRef.value) {
-    const webview = webviewRef.value as any
-    webview.goForward()
+    webviewRef.value.goForward()
   }
 }
 
 const reload = () => {
   if (webviewRef.value) {
-    const webview = webviewRef.value as any
-    webview.reload()
+    webviewRef.value.reload()
   }
 }
 
 onMounted(() => {
-  const webview = webviewRef.value as any
+  const webview = webviewRef.value
   if (webview) {
     webview.addEventListener('did-start-loading', () => {
       isLoading.value = true
@@ -48,8 +60,9 @@ onMounted(() => {
       canGoForward.value = webview.canGoForward()
     })
 
-    webview.addEventListener('did-fail-load', (event: any) => {
-      console.error('Failed to load:', event.errorDescription)
+    webview.addEventListener('did-fail-load', (event?: Event) => {
+      const failEvent = event as DidFailLoadEvent
+      console.error('Failed to load:', failEvent.errorDescription)
       isLoading.value = false
     })
 
