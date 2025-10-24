@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { shallowRef, type Ref } from 'vue'
 import * as THREE from 'three'
 import { calculatePlaneSize } from '../utils/geometry'
 
@@ -6,9 +6,9 @@ const FOV = 75
 const DISTANCE = 5
 
 export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
-  const scene = ref<THREE.Scene | null>(null)
-  const camera = ref<THREE.PerspectiveCamera | null>(null)
-  const renderer = ref<THREE.WebGLRenderer | null>(null)
+  const scene = shallowRef<THREE.Scene | null>(null) // Change ref to shallowRef
+  const camera = shallowRef<THREE.PerspectiveCamera | null>(null) // Change ref to shallowRef
+  const renderer = shallowRef<THREE.WebGLRenderer | null>(null) // Change ref to shallowRef
 
   const initScene = () => {
     if (!canvasRef.value) return
