@@ -59,8 +59,10 @@ const initThreeJS = () => {
   scene.background = new THREE.Color(0x000000)
 
   // Setup camera
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
-  camera.position.z = 5
+  const fov = 75
+  const distance = 5
+  camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.1, 1000)
+  camera.position.z = distance
 
   // Setup renderer
   renderer = new THREE.WebGLRenderer({
@@ -69,18 +71,36 @@ const initThreeJS = () => {
   })
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.setPixelRatio(window.devicePixelRatio)
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace
 
-  // Create fullscreen planes for each webview (stacked at same position)
-  const aspect = window.innerWidth / window.innerHeight
-  const planeHeight = 5
-  const planeWidth = planeHeight * aspect
+  // Calculate plane size to fit viewport while maintaining 16:9 aspect ratio (1920x1080)
+  const webpageAspect = 16 / 9
+  const vFOV = (fov * Math.PI) / 180
+  const viewportHeight = 2 * Math.tan(vFOV / 2) * distance
+  const viewportWidth = viewportHeight * camera.aspect
+
+  let planeWidth: number
+  let planeHeight: number
+
+  if (camera.aspect > webpageAspect) {
+    // Viewport is wider than 16:9 - use pillarboxing (fit to height)
+    planeHeight = viewportHeight
+    planeWidth = planeHeight * webpageAspect
+  } else {
+    // Viewport is taller than 16:9 - use letterboxing (fit to width)
+    planeWidth = viewportWidth
+    planeHeight = planeWidth / webpageAspect
+  }
+
   const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight)
 
+  // Create fullscreen planes for each webview (stacked at same position)
   urls.forEach((url, index) => {
     // Create texture
     const texture = new THREE.Texture()
     texture.minFilter = THREE.LinearFilter
     texture.magFilter = THREE.LinearFilter
+    texture.colorSpace = THREE.LinearSRGBColorSpace
     textures.push(texture)
 
     // Create material with texture
@@ -110,10 +130,26 @@ const onWindowResize = () => {
   camera.updateProjectionMatrix()
   renderer.setSize(window.innerWidth, window.innerHeight)
 
-  // Update plane sizes to maintain fullscreen
-  const aspect = window.innerWidth / window.innerHeight
-  const planeHeight = 5
-  const planeWidth = planeHeight * aspect
+  // Recalculate plane sizes to maintain 16:9 aspect ratio with letterboxing/pillarboxing
+  const fov = 75
+  const distance = 5
+  const webpageAspect = 16 / 9
+  const vFOV = (fov * Math.PI) / 180
+  const viewportHeight = 2 * Math.tan(vFOV / 2) * distance
+  const viewportWidth = viewportHeight * camera.aspect
+
+  let planeWidth: number
+  let planeHeight: number
+
+  if (camera.aspect > webpageAspect) {
+    // Viewport is wider than 16:9 - use pillarboxing (fit to height)
+    planeHeight = viewportHeight
+    planeWidth = planeHeight * webpageAspect
+  } else {
+    // Viewport is taller than 16:9 - use letterboxing (fit to width)
+    planeWidth = viewportWidth
+    planeHeight = planeWidth / webpageAspect
+  }
 
   planes.forEach((plane) => {
     plane.geometry.dispose()
@@ -181,9 +217,27 @@ const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
 
 const createFragments = (fromIndex: number) => {
   const fromPlane = planes[fromIndex]
-  const aspect = window.innerWidth / window.innerHeight
-  const planeHeight = 5
-  const planeWidth = planeHeight * aspect
+
+  // Calculate plane dimensions using same method as initialization (16:9 aspect)
+  const fov = 75
+  const distance = 5
+  const webpageAspect = 16 / 9
+  const vFOV = (fov * Math.PI) / 180
+  const viewportHeight = 2 * Math.tan(vFOV / 2) * distance
+  const viewportWidth = viewportHeight * camera.aspect
+
+  let planeWidth: number
+  let planeHeight: number
+
+  if (camera.aspect > webpageAspect) {
+    // Viewport is wider than 16:9 - use pillarboxing (fit to height)
+    planeHeight = viewportHeight
+    planeWidth = planeHeight * webpageAspect
+  } else {
+    // Viewport is taller than 16:9 - use letterboxing (fit to width)
+    planeWidth = viewportWidth
+    planeHeight = planeWidth / webpageAspect
+  }
 
   const fragmentWidth = planeWidth / GRID_COLS
   const fragmentHeight = planeHeight / GRID_ROWS
@@ -212,6 +266,7 @@ const createFragments = (fromIndex: number) => {
         transparent: true,
         opacity: 1,
       })
+      material.map!.colorSpace = THREE.LinearSRGBColorSpace
       material.map!.needsUpdate = true
 
       // Create fragment mesh
