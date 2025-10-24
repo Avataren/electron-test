@@ -249,7 +249,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   height: 120px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));
+  background: red; /*/linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));*/
   backdrop-filter: blur(10px);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 1000;
@@ -263,12 +263,15 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  max-width: 1400px;
   padding: 0 40px;
+  gap: 40px;
 }
 
 .setup-info {
-  flex: 1;
+  flex: 0 0 auto;
   color: white;
+  min-width: 300px;
 }
 
 .setup-info h2 {
@@ -288,6 +291,7 @@ onUnmounted(() => {
   display: flex;
   gap: 15px;
   align-items: center;
+  flex: 0 0 auto;
 }
 
 .control-btn {

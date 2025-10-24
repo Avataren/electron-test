@@ -51,12 +51,14 @@ export class ViewManager {
   }
 
   private setBounds(view: BrowserView, windowBounds: any): void {
-    view.setBounds({
+    const bounds = {
       x: 0,
       y: 0,
       width: windowBounds.width,
       height: windowBounds.height - this.config.window.controlBarHeight,
-    })
+    }
+    console.log('Setting view bounds:', bounds) // Add this
+    view.setBounds(bounds)
   }
 
   private setupViewEventHandlers(view: BrowserView, index: number, url: string): void {
@@ -88,7 +90,7 @@ export class ViewManager {
     const view = this.views.get(index)
     if (view) {
       this.mainWindow.addBrowserView(view)
-      this.updateBounds()
+      this.updateBounds() // Add this line
     }
   }
 

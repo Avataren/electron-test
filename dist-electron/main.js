@@ -24,8 +24,12 @@ const defaultConfig = {
   }
 };
 class WindowManager {
+  window = null;
+  config;
+  viteDevServerUrl;
+  rendererDist;
+  publicPath;
   constructor(config, viteDevServerUrl, rendererDist, publicPath) {
-    this.window = null;
     this.config = config;
     this.viteDevServerUrl = viteDevServerUrl;
     this.rendererDist = rendererDist;
@@ -79,9 +83,10 @@ class WindowManager {
   }
 }
 class ViewManager {
+  views = /* @__PURE__ */ new Map();
+  config;
+  mainWindow = null;
   constructor(config) {
-    this.views = /* @__PURE__ */ new Map();
-    this.mainWindow = null;
     this.config = config;
   }
   setMainWindow(window) {
@@ -115,12 +120,14 @@ class ViewManager {
     });
   }
   setBounds(view, windowBounds) {
-    view.setBounds({
+    const bounds = {
       x: 0,
       y: 0,
       width: windowBounds.width,
       height: windowBounds.height - this.config.window.controlBarHeight
-    });
+    };
+    console.log("Setting view bounds:", bounds);
+    view.setBounds(bounds);
   }
   setupViewEventHandlers(view, index, url) {
     view.webContents.on("did-finish-load", () => {
@@ -162,8 +169,10 @@ class ViewManager {
   }
 }
 class OffscreenRenderer {
+  windows = /* @__PURE__ */ new Map();
+  config;
+  windowManager;
   constructor(config, windowManager2) {
-    this.windows = /* @__PURE__ */ new Map();
     this.config = config;
     this.windowManager = windowManager2;
   }
@@ -233,6 +242,11 @@ class OffscreenRenderer {
   }
 }
 class IPCHandlers {
+  config;
+  viewManager;
+  offscreenRenderer;
+  windowManager;
+  onSetupComplete;
   constructor(config, viewManager2, offscreenRenderer2, windowManager2, onSetupComplete) {
     this.config = config;
     this.viewManager = viewManager2;
