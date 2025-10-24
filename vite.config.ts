@@ -12,6 +12,7 @@ export default defineConfig({
       template: {
         compilerOptions: {
           // Treat webview as a custom element (Electron webview tag)
+          // Note: We're not using webview anymore, but keeping this for backwards compatibility
           isCustomElement: (tag) => tag === 'webview',
         },
       },
@@ -23,7 +24,7 @@ export default defineConfig({
         entry: 'electron/main.ts',
       },
       {
-        // Preload script
+        // Preload script - use ES module format
         entry: 'electron/preload.ts',
         onstart({ startup }) {
           startup()
@@ -33,8 +34,8 @@ export default defineConfig({
             outDir: 'dist-electron',
             rollupOptions: {
               output: {
-                format: 'cjs', // Changed from 'es' to 'cjs'
-                entryFileNames: '[name].js', // Changed from .mjs to .js
+                format: 'es', // Use ES module format for preload
+                entryFileNames: '[name].mjs', // Output as .mjs
               },
             },
           },

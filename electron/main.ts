@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -24,6 +24,15 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 let win: BrowserWindow | null
+const offscreenWindows: Map<number, BrowserWindow> = new Map()
+
+// URLs to render offscreen
+const urls = [
+  'https://cubed.no',
+  'https://www.github.com',
+  'https://www.wikipedia.org',
+  'https://news.ycombinator.com',
+]
 
 function createWindow() {
   win = new BrowserWindow({
@@ -31,8 +40,7 @@ function createWindow() {
     height: 800,
     icon: path.join(process.env.VITE_PUBLIC || '', 'favicon.ico'),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      webviewTag: true,
+      preload: path.join(__dirname, 'preload.mjs'),
       nodeIntegration: false,
       contextIsolation: true,
     },
@@ -52,11 +60,86 @@ function createWindow() {
   }
 }
 
+function createOffscreenWindows() {
+  urls.forEach((url, index) => {
+    const offscreenWin = new BrowserWindow({
+      width: 1920,
+      height: 1080,
+      show: false,
+      webPreferences: {
+        offscreen: true,
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    })
+
+    offscreenWin.loadURL(url)
+    offscreenWindows.set(index, offscreenWin)
+
+    // Handle paint events - this fires when the page updates
+    offscreenWin.webContents.on('paint', (event, dirty, image) => {
+      // Convert image to JPEG buffer for better performance
+      const buffer = image.toJPEG(85)
+
+      // Send frame to renderer process
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('webview-frame', {
+          index,
+          buffer: buffer,
+          size: image.getSize(),
+        })
+      }
+    })
+
+    // Start painting - set frame rate to 30fps
+    offscreenWin.webContents.setFrameRate(30)
+
+    // Handle page load events
+    offscreenWin.webContents.on('did-finish-load', () => {
+      console.log(`Offscreen window ${index} loaded: ${url}`)
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('webview-loaded', { index, url })
+      }
+    })
+
+    offscreenWin.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      console.error(`Offscreen window ${index} failed to load: ${errorDescription}`)
+    })
+  })
+}
+
+// IPC handlers
+ipcMain.handle('get-webview-urls', () => {
+  return urls
+})
+
+ipcMain.handle('reload-webview', (event, index: number) => {
+  const offscreenWin = offscreenWindows.get(index)
+  if (offscreenWin && !offscreenWin.isDestroyed()) {
+    offscreenWin.webContents.reload()
+  }
+})
+
+ipcMain.handle('navigate-webview', (event, index: number, url: string) => {
+  const offscreenWin = offscreenWindows.get(index)
+  if (offscreenWin && !offscreenWin.isDestroyed()) {
+    offscreenWin.loadURL(url)
+  }
+})
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    // Clean up offscreen windows
+    offscreenWindows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.destroy()
+      }
+    })
+    offscreenWindows.clear()
+
     app.quit()
     win = null
   }
@@ -70,4 +153,7 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  createWindow()
+  createOffscreenWindows()
+})
