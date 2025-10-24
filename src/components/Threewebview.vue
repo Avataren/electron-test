@@ -1,3 +1,4 @@
+<!-- eslint-disable @typescript-eslint/no-explicit-any -->
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as THREE from 'three'
@@ -34,7 +35,18 @@ const pageAspect = ref<number | null>(null)
 
     // FIXED: Mark texture as loaded when we receive first frame (during initial loading)
     if (isInitialLoading.value && !store.setupMode && !loadedTextures.value.has(index)) {
-      console.log(`Texture ${index} received first frame and applied to THREE.Texture`)
+      console.log(`✅ Texture ${index} received first frame and applied to THREE.Texture`)
+
+      // DEBUG: Verify texture actually has an image
+      const tex = textures[index]
+      if (tex && tex.image) {
+        const img = tex.image as HTMLCanvasElement
+        console.log(`   → Texture ${index} image: ${img.width}x${img.height}`)
+        console.log(`   → Texture ${index} needsUpdate: ${tex.needsUpdate}`)
+      } else {
+        console.error(`   ❌ Texture ${index} has no image despite being marked loaded!`)
+      }
+
       loadedTextures.value.add(index)
       checkAllTexturesLoaded()
       // Continue to skip resize operations during initial loading
@@ -189,16 +201,16 @@ const createPlanes = () => {
   transitionManager = new TransitionManager(scene.value, textures, planeConfig)
 }
 
-const validateTextureSize = (width: number, height: number, maxSize: number) => {
-  if (width > maxSize || height > maxSize) {
-    const scale = maxSize / Math.max(width, height)
-    return {
-      width: Math.max(1, Math.floor(width * scale)),
-      height: Math.max(1, Math.floor(height * scale))
-    }
-  }
-  return { width, height }
-}
+// const validateTextureSize = (width: number, height: number, maxSize: number) => {
+//   if (width > maxSize || height > maxSize) {
+//     const scale = maxSize / Math.max(width, height)
+//     return {
+//       width: Math.max(1, Math.floor(width * scale)),
+//       height: Math.max(1, Math.floor(height * scale))
+//     }
+//   }
+//   return { width, height }
+// }
 
 // Track if resize operation is in progress
 const isResizing = ref(false)
@@ -459,15 +471,18 @@ const refreshWebviews = async () => {
 const checkAllTexturesLoaded = () => {
   if (loadedTextures.value.size === urls.value.length && !allTexturesLoaded.value) {
     allTexturesLoaded.value = true
-    isInitialLoading.value = false // FIXED: Mark initial loading as complete
-    console.log('All textures loaded, starting slideshow')
-    // Keep current (0), next (1), and next+1 (2) windows painting
-    updateActivePaintingWindows([0, 1, 2])
+    isInitialLoading.value = false
+    console.log('🎉 All textures loaded, starting slideshow')
 
+    // CRITICAL: Disable ALL painting first, then only enable what we need
+    const allIndices = Array.from({ length: urls.value.length }, (_, i) => i)
+    allIndices.forEach(i => window.ipcRenderer.invoke('disable-painting', i))
+
+    // Small delay, then enable only first 3
     setTimeout(() => {
-      console.log('Starting rotation timer after texture warmup period')
-      startTimers()
-    }, 2000)
+      updateActivePaintingWindows([0, 1, 2])
+      setTimeout(() => startTimers(), 2000)
+    }, 100)
   }
   loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
 }
@@ -540,6 +555,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+
   <div class="webview-3d-container">
     <div v-if="store.setupMode && urls.length > 0" class="setup-control-bar">
       <div class="setup-content">

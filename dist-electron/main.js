@@ -48,6 +48,7 @@ class WindowManager {
         sandbox: true
       }
     });
+    this.window.webContents.openDevTools({ mode: "detach" });
     this.window.webContents.on("did-finish-load", () => {
       this.sendToRenderer("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
     });
