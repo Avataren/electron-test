@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { AppConfig } from './config'
+import type { AppConfig } from './config'
 import { ViewManager } from './managers/ViewManager'
 import { OffscreenRenderer } from './managers/OffscreenRenderer'
 import { WindowManager } from './managers/WindowManager'
@@ -70,6 +70,27 @@ export class IPCHandlers {
     ipcMain.handle('disable-painting', (event, index: number) => {
       this.offscreenRenderer.disablePainting(index)
     })
+
+      // Receive initial-frame ACKs from renderer and forward to offscreen renderer
+      ipcMain.on('initial-frame-ack', (event, data: { index: number }) => {
+        try {
+          const idx = data?.index
+          if (typeof idx === 'number') {
+            this.offscreenRenderer.handleInitialAck(idx)
+          }
+        } catch (err) {
+          console.warn('[IPC] failed handling initial-frame-ack', err)
+        }
+      })
+
+    // Diagnostic: listen for renderer acknowledgements that a texture was applied
+    ipcMain.on('texture-applied', (event, data) => {
+      try {
+        console.log('[IPC] texture-applied from renderer', data)
+      } catch (err) {
+        console.warn('[IPC] failed to log texture-applied', err)
+      }
+    })
   }
 
   unregister(): void {
@@ -81,5 +102,6 @@ export class IPCHandlers {
     ipcMain.removeHandler('set-active-painting-windows')
     ipcMain.removeHandler('enable-painting')
     ipcMain.removeHandler('disable-painting')
+      ipcMain.removeAllListeners('initial-frame-ack')
   }
 }

@@ -1,19 +1,30 @@
 const { ipcRenderer, contextBridge } = require("electron");
 contextBridge.exposeInMainWorld("ipcRenderer", {
-  on(...args) {
-    const [channel, listener] = args;
-    return ipcRenderer.on(channel, (event, ...args2) => listener(event, ...args2));
+  on(channel, listener) {
+    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args));
   },
-  off(...args) {
-    const [channel, ...omit] = args;
-    return ipcRenderer.off(channel, ...omit);
+  off(channel, listener) {
+    return ipcRenderer.off(channel, ...listener ? [listener] : []);
   },
-  send(...args) {
-    const [channel, ...omit] = args;
-    return ipcRenderer.send(channel, ...omit);
+  send(channel, ...args) {
+    return ipcRenderer.send(channel, ...args);
   },
-  invoke(...args) {
-    const [channel, ...omit] = args;
-    return ipcRenderer.invoke(channel, ...omit);
+  invoke(channel, ...args) {
+    return ipcRenderer.invoke(channel, ...args);
+  }
+});
+window.addEventListener("message", (ev) => {
+  try {
+    const payload = ev.data;
+    if (!payload) return;
+    const channel = payload.channel || "webview-frame";
+    const message = payload.message ?? payload;
+    try {
+      ipcRenderer.emit(channel, null, message);
+    } catch (err) {
+      console.warn("[preload] failed to emit postMessage payload to ipcRenderer", err);
+    }
+  } catch (err) {
+    console.warn("[preload] error handling postMessage event", err);
   }
 });

@@ -44,12 +44,12 @@ export const useWebviewStore = defineStore('webview', () => {
 
   function toggleTransitionType() {
     currentTransitionIndex.value = (currentTransitionIndex.value + 1) % transitionTypes.length
-    currentTransitionType.value = transitionTypes[currentTransitionIndex.value]
+    currentTransitionType.value = transitionTypes[currentTransitionIndex.value] as TransitionType
   }
 
   function getNextTransitionType(): TransitionType {
     const nextIdx = (currentTransitionIndex.value + 1) % transitionTypes.length
-    return transitionTypes[nextIdx]
+    return transitionTypes[nextIdx] as TransitionType
   }
 
   function nextSetupPage(totalPages: number) {

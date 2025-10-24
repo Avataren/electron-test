@@ -85,7 +85,12 @@ export class SwirlTransition extends BaseTransition {
     this.progress += 1 / 60 / this.duration
 
     const material = this.planeMesh.material as THREE.ShaderMaterial
-    material.uniforms.progress.value = this.progress
+    if (material.uniforms) {
+      const progressU = (material.uniforms as any).progress
+      if (progressU && typeof progressU.value !== 'undefined') {
+        progressU.value = this.progress
+      }
+    }
 
     // Scale down as it swirls
     const scale = 1 - this.progress * 0.3

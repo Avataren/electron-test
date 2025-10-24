@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 const defaultConfig = {
   urls: [
+    "https://www.testufo.com/",
     "https://cubed.no",
     "https://www.github.com",
     "https://www.wikipedia.org",
@@ -50,6 +51,17 @@ class WindowManager {
     this.window.webContents.on("did-finish-load", () => {
       this.sendToRenderer("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
     });
+    try {
+      const ses = this.window.webContents.session;
+      ses.webRequest.onHeadersReceived({ urls: ["*://*/*"] }, (details, callback) => {
+        const responseHeaders = Object.assign({}, details.responseHeaders || {});
+        responseHeaders["Cross-Origin-Opener-Policy"] = ["same-origin"];
+        responseHeaders["Cross-Origin-Embedder-Policy"] = ["require-corp"];
+        callback({ responseHeaders });
+      });
+    } catch (err) {
+      console.warn("[WindowManager] failed to enable COOP/COEP headers", err);
+    }
     if (this.viteDevServerUrl) {
       this.window.loadURL(this.viteDevServerUrl);
       this.window.webContents.openDevTools();
@@ -128,7 +140,7 @@ class ViewManager {
       view.setAutoResize({ width: true, height: true });
       view.webContents.loadURL(url);
       this.views.set(index, view);
-      if (index === 0) {
+      if (index === 0 && this.mainWindow) {
         this.mainWindow.addBrowserView(view);
       }
       this.setupViewEventHandlers(view, index, url);
@@ -190,9 +202,34 @@ class OffscreenRenderer {
   paintingEnabled = /* @__PURE__ */ new Set();
   // Reuse SharedArrayBuffers per window to avoid reallocating on every frame
   sharedBuffers = /* @__PURE__ */ new Map();
+  // Track whether the renderer has acknowledged the first applied frame
+  acknowledgedFirstFrame = /* @__PURE__ */ new Map();
+  // Track whether we're waiting for the initial ack for an index
+  waitingForAck = /* @__PURE__ */ new Map();
+  // Track last send timestamp per index (ms)
+  lastSentAt = /* @__PURE__ */ new Map();
+  // Pending frame per index (coalesce rapid paint events)
+  pendingFrames = /* @__PURE__ */ new Map();
+  // Per-index send timers to schedule next allowed send
+  sendTimers = /* @__PURE__ */ new Map();
+  // Initial ACK timeouts per index
+  initialAckTimeouts = /* @__PURE__ */ new Map();
+  // How long to wait for an initial-frame ACK before sending a fallback (ms)
+  initialAckTimeoutMs = 4e3;
   constructor(config, windowManager2) {
     this.config = config;
     this.windowManager = windowManager2;
+  }
+  // Called by IPC handler when renderer confirms it applied the initial frame
+  handleInitialAck(index) {
+    this.acknowledgedFirstFrame.set(index, true);
+    this.waitingForAck.delete(index);
+    console.info(`[OffscreenRenderer] received initial-frame ACK for ${index}`);
+    const t = this.initialAckTimeouts.get(index);
+    if (t) {
+      clearTimeout(t);
+      this.initialAckTimeouts.delete(index);
+    }
   }
   createOffscreenWindows(urls) {
     urls.forEach((url, index) => {
@@ -220,8 +257,90 @@ class OffscreenRenderer {
       if (!this.paintingEnabled.has(index)) return;
       const bitmap = image.toBitmap();
       const size = image.getSize();
-      const buf = Buffer.from(bitmap);
-      this.windowManager.sendToRenderer("webview-frame", { index, buffer: buf, size, format: "raw" });
+      try {
+        const buf = Buffer.from(bitmap);
+        const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+        this.pendingFrames.set(index, { buffer: ab, size });
+        const existingTimer = this.sendTimers.get(index);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+        const attemptSend = () => {
+          const pending = this.pendingFrames.get(index);
+          if (!pending) return;
+          const hasAck = !!this.acknowledgedFirstFrame.get(index);
+          const waiting = !!this.waitingForAck.get(index);
+          if (!hasAck) {
+            if (waiting) {
+              return;
+            }
+            try {
+              this.waitingForAck.set(index, true);
+              this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: pending.buffer, size: pending.size, format: "raw" }, [pending.buffer]);
+              this.lastSentAt.set(index, Date.now());
+              console.info(`[OffscreenRenderer] sent initial frame (ArrayBuffer) for ${index}, awaiting ACK`);
+              try {
+                const t = setTimeout(() => {
+                  if (this.waitingForAck.get(index)) {
+                    console.warn(`[OffscreenRenderer] initial-frame ACK timeout for ${index}, sending fallback frame`);
+                    this.waitingForAck.delete(index);
+                    this.acknowledgedFirstFrame.set(index, true);
+                    try {
+                      const fallback = new Uint8ClampedArray([255, 255, 255, 255]);
+                      const fallbackAb = fallback.buffer.slice(0);
+                      this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: fallbackAb, size: { width: 1, height: 1 }, format: "raw" }, [fallbackAb]);
+                      this.windowManager.sendToRenderer("webview-load-timeout", { index });
+                    } catch (err) {
+                      console.error("[OffscreenRenderer] failed to send fallback frame after timeout", err);
+                    }
+                  }
+                  this.initialAckTimeouts.delete(index);
+                }, this.initialAckTimeoutMs);
+                this.initialAckTimeouts.set(index, t);
+              } catch (err) {
+                console.warn("[OffscreenRenderer] failed to schedule initial ACK timeout", err);
+              }
+            } catch (err) {
+              console.warn("[OffscreenRenderer] failed to post initial ArrayBuffer frame, falling back to send", err);
+              try {
+                this.windowManager.sendToRenderer("webview-frame", { index, buffer: Buffer.from(pending.buffer), size: pending.size, format: "raw" });
+              } catch (e) {
+                console.error("[OffscreenRenderer] fallback send also failed", e);
+              }
+            }
+            return;
+          }
+          const frameRate = this.config.rendering.frameRate || 30;
+          const minInterval = Math.max(0, Math.floor(1e3 / frameRate));
+          const last = this.lastSentAt.get(index) || 0;
+          const now = Date.now();
+          const elapsed = now - last;
+          if (elapsed < minInterval) {
+            const delay = minInterval - elapsed;
+            const t = setTimeout(attemptSend, delay);
+            this.sendTimers.set(index, t);
+            return;
+          }
+          try {
+            const nextAb = pending.buffer.slice(0);
+            this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: nextAb, size: pending.size, format: "raw" }, [nextAb]);
+            this.lastSentAt.set(index, now);
+            this.pendingFrames.delete(index);
+          } catch (err) {
+            console.warn("[OffscreenRenderer] failed to post ArrayBuffer frame, falling back to send", err);
+            try {
+              this.windowManager.sendToRenderer("webview-frame", { index, buffer: Buffer.from(pending.buffer), size: pending.size, format: "raw" });
+              this.lastSentAt.set(index, now);
+              this.pendingFrames.delete(index);
+            } catch (e) {
+              console.error("[OffscreenRenderer] fallback send also failed", e);
+            }
+          }
+        };
+        attemptSend();
+      } catch (err) {
+        console.error("[OffscreenRenderer] Failed to forward paint frame", { index, err });
+      }
     });
   }
   setupLoadHandlers(window, index, url) {
@@ -236,9 +355,15 @@ class OffscreenRenderer {
   enablePainting(index) {
     const window = this.windows.get(index);
     if (window && !window.isDestroyed() && !this.paintingEnabled.has(index)) {
-      this.paintingEnabled.add(index);
-      window.webContents.setFrameRate(this.config.rendering.frameRate);
-      console.log(`Enabled painting for window ${index}`);
+      try {
+        window.webContents.setFrameRate(this.config.rendering.frameRate);
+      } catch (err) {
+        console.warn("[OffscreenRenderer] setFrameRate failed on enable", { index, err });
+      }
+      setTimeout(() => {
+        this.paintingEnabled.add(index);
+        console.log(`Enabled painting for window ${index}`);
+      }, 60);
     }
   }
   disablePainting(index) {
@@ -273,6 +398,7 @@ class OffscreenRenderer {
   resize(index, width, height) {
     const window = this.windows.get(index);
     if (window && !window.isDestroyed()) {
+      console.info(`[OffscreenRenderer] resize window ${index} -> ${width}x${height}`);
       window.setSize(width, height);
     }
   }
@@ -280,6 +406,7 @@ class OffscreenRenderer {
   resizeAll(width, height) {
     this.windows.forEach((win) => {
       if (!win.isDestroyed()) {
+        console.info(`[OffscreenRenderer] resizeAll -> ${width}x${height}`);
         win.setSize(width, height);
       }
     });
@@ -289,6 +416,7 @@ class OffscreenRenderer {
     indices.forEach((i) => {
       const win = this.windows.get(i);
       if (win && !win.isDestroyed()) {
+        console.info(`[OffscreenRenderer] resizeIndices - window ${i} -> ${width}x${height}`);
         win.setSize(width, height);
       }
     });
@@ -359,6 +487,23 @@ class IPCHandlers {
     ipcMain.handle("disable-painting", (event, index) => {
       this.offscreenRenderer.disablePainting(index);
     });
+    ipcMain.on("initial-frame-ack", (event, data) => {
+      try {
+        const idx = data?.index;
+        if (typeof idx === "number") {
+          this.offscreenRenderer.handleInitialAck(idx);
+        }
+      } catch (err) {
+        console.warn("[IPC] failed handling initial-frame-ack", err);
+      }
+    });
+    ipcMain.on("texture-applied", (event, data) => {
+      try {
+        console.log("[IPC] texture-applied from renderer", data);
+      } catch (err) {
+        console.warn("[IPC] failed to log texture-applied", err);
+      }
+    });
   }
   unregister() {
     ipcMain.removeHandler("get-webview-urls");
@@ -369,6 +514,7 @@ class IPCHandlers {
     ipcMain.removeHandler("set-active-painting-windows");
     ipcMain.removeHandler("enable-painting");
     ipcMain.removeHandler("disable-painting");
+    ipcMain.removeAllListeners("initial-frame-ack");
   }
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import path from 'node:path'
-import { AppConfig } from './config'
+import type { AppConfig } from '../config'
 
 export class WindowManager {
   private window: BrowserWindow | null = null
@@ -37,6 +37,22 @@ export class WindowManager {
     this.window.webContents.on('did-finish-load', () => {
       this.sendToRenderer('main-process-message', new Date().toLocaleString())
     })
+
+    // Ensure the renderer is cross-origin isolated so it can receive
+    // SharedArrayBuffer objects. Add COOP/COEP headers for the renderer
+    // session so postMessage with SABs can be serialized into the page.
+    try {
+      const ses = this.window.webContents.session
+      ses.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (details, callback) => {
+        const responseHeaders = Object.assign({}, details.responseHeaders || {})
+        // Add COOP and COEP to enable SharedArrayBuffer usage in renderer
+        responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin']
+        responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp']
+        callback({ responseHeaders })
+      })
+    } catch (err) {
+      console.warn('[WindowManager] failed to enable COOP/COEP headers', err)
+    }
 
     if (this.viteDevServerUrl) {
       this.window.loadURL(this.viteDevServerUrl)

@@ -1,5 +1,5 @@
 import { BrowserView, BrowserWindow } from 'electron'
-import { AppConfig } from '../config'
+import type { AppConfig } from '../config'
 
 export class ViewManager {
   private readonly views: Map<number, BrowserView> = new Map()
@@ -45,7 +45,7 @@ export class ViewManager {
 
       this.views.set(index, view)
 
-      if (index === 0) {
+      if (index === 0 && this.mainWindow) {
         this.mainWindow.addBrowserView(view)
       }
 

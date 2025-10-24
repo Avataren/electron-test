@@ -93,7 +93,7 @@ export class TransitionManager {
 
   getNextType(): TransitionType {
     this.currentTypeIndex = (this.currentTypeIndex + 1) % this.transitionTypes.length
-    return this.transitionTypes[this.currentTypeIndex]
+    return this.transitionTypes[this.currentTypeIndex] as TransitionType
   }
 
   hasActiveTransition(): boolean {

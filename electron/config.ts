@@ -18,6 +18,7 @@ export interface AppConfig {
 
 export const defaultConfig: AppConfig = {
   urls: [
+    'https://www.testufo.com/',
     'https://cubed.no',
     'https://www.github.com',
     'https://www.wikipedia.org',

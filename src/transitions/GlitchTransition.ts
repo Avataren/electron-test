@@ -112,8 +112,16 @@ export class GlitchTransition extends BaseTransition {
     this.progress += 1 / 60 / this.duration
 
     const material = this.planeMesh.material as THREE.ShaderMaterial
-    material.uniforms.progress.value = this.progress
-    material.uniforms.time.value += 0.016 // Approx 60fps
+    if (material.uniforms) {
+      const progressU = (material.uniforms as any).progress
+      if (progressU && typeof progressU.value !== 'undefined') {
+        progressU.value = this.progress
+      }
+      const timeU = (material.uniforms as any).time
+      if (timeU && typeof timeU.value !== 'undefined') {
+        timeU.value += 0.016 // Approx 60fps
+      }
+    }
 
     return this.progress >= 1.0
   }

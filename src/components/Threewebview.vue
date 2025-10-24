@@ -6,6 +6,7 @@ import { useThreeScene } from '../composables/useThreeScene'
 import { useWebviewFrames } from '../composables/useWebviewFrames'
 import { useRotationTimer } from '../composables/useRotationTimer'
 import { TransitionManager } from '../transitions/TransitionManager'
+import type { TransitionType } from '../types'
 import { calculatePlaneSize } from '../utils/geometry'
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -26,9 +27,9 @@ const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
 // plane sizing and resizes preserve the source aspect for 1:1 rendering.
 const pageAspect = ref<number | null>(null)
 
-const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
+  const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
   textures,
-  (index: number, size?: { width: number; height: number }) => {
+  async (index: number, size?: { width: number; height: number; backingWidth?: number; backingHeight?: number }) => {
     // Update timestamp when texture receives new frame
     textureUpdateTimestamps.value.set(index, Date.now())
 
@@ -38,6 +39,43 @@ const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
     // 1:1 with the source.
     if (size && camera.value && planes.length > 0) {
       const reportedAspect = size.width / size.height
+
+      // If the backing/device size exceeds GPU max texture size, request a
+      // capped resize from the main process to avoid GL copy/overflow errors.
+      try {
+        const dpr = window.devicePixelRatio || 1
+        const backingW = size.backingWidth ?? Math.max(1, Math.round(size.width * dpr))
+        const backingH = size.backingHeight ?? Math.max(1, Math.round(size.height * dpr))
+        const maxTex = renderer.value?.capabilities?.maxTextureSize || 8192
+        if (backingW > maxTex || backingH > maxTex) {
+          console.warn('[Threewebview] backing size exceeds GPU maxTextureSize, requesting capped resize', { index, backingW, backingH, maxTex })
+
+          const scale = maxTex / Math.max(backingW, backingH)
+          const targetBackingW = Math.max(1, Math.floor(backingW * scale))
+          const targetBackingH = Math.max(1, Math.floor(backingH * scale))
+          const cssTargetW = Math.max(1, Math.round(targetBackingW / dpr))
+          const cssTargetH = Math.max(1, Math.round(targetBackingH / dpr))
+
+          const active = [
+            store.currentIndex,
+            (store.currentIndex + 1) % planes.length,
+            (store.currentIndex + 2) % planes.length,
+          ]
+
+          // Disable painting for the active set while we resize their backing
+          // surfaces to avoid races and GL copy overflows.
+          await disablePaintingForIndices(active)
+          await window.ipcRenderer.invoke('resize-active-offscreen-windows', active, cssTargetW, cssTargetH)
+          // Re-enable painting and allow a short warmup for paints to begin.
+          await enablePaintingForIndices(active)
+          await new Promise((res) => setTimeout(res, 200))
+
+          // Skip applying this frame — a new correctly-sized frame should arrive.
+          return
+        }
+      } catch (err) {
+        console.warn('[Threewebview] Failed to check/cap backing size', err)
+      }
 
       // Update if we haven't sized yet or aspect changed by more than 0.5%
       const shouldUpdate =
@@ -136,74 +174,96 @@ const createPlanes = () => {
   transitionManager = new TransitionManager(scene.value, textures, planeConfig)
 }
 
+const validateTextureSize = (width: number, height: number, maxSize: number) => {
+  if (width > maxSize || height > maxSize) {
+    const scale = maxSize / Math.max(width, height)
+    return {
+      width: Math.max(1, Math.floor(width * scale)),
+      height: Math.max(1, Math.floor(height * scale))
+    }
+  }
+  return { width, height }
+}
+
+// Track if resize operation is in progress
+const isResizing = ref(false)
+
 const handleResize = async () => {
-  const newPlaneConfig = onResize(pageAspect.value ?? undefined)
-  if (!newPlaneConfig) return
-
-  planes.forEach((plane) => {
-    plane.geometry.dispose()
-    plane.geometry = new THREE.PlaneGeometry(newPlaneConfig.width, newPlaneConfig.height)
-  })
-
-  if (transitionManager) {
-    transitionManager.updatePlaneConfig(newPlaneConfig)
+  // Prevent concurrent resize operations
+  if (isResizing.value || store.isTransitioning) {
+    console.log('Skipping resize: ' + (isResizing.value ? 'resize in progress' : 'transition in progress'))
+    return
   }
 
-  // Ensure offscreen windows are resized to match the renderer pixel size so
-  // that subsequent 'paint' events produce textures at the new resolution.
-  // Use devicePixelRatio to convert CSS pixels to device pixels.
+  isResizing.value = true
+
   try {
-    const dpr = window.devicePixelRatio || 1
+    const newPlaneConfig = onResize(pageAspect.value ?? undefined)
+    if (!newPlaneConfig) return
 
-    // Prefer canvas element size if available so we match the actual render target
-    const cssWidth = canvasRef.value?.clientWidth || window.innerWidth
-    const cssHeight = canvasRef.value?.clientHeight || window.innerHeight
+    planes.forEach((plane) => {
+      plane.geometry.dispose()
+      plane.geometry = new THREE.PlaneGeometry(newPlaneConfig.width, newPlaneConfig.height)
+    })
 
-    const pixelWidth = Math.max(1, Math.round(cssWidth * dpr))
-    const pixelHeight = Math.max(1, Math.round(cssHeight * dpr))
+    if (transitionManager) {
+      transitionManager.updatePlaneConfig(newPlaneConfig)
+    }
 
-    // Resize only active offscreen windows to reduce work and IPC traffic.
-    const active = [
-      store.currentIndex,
-      (store.currentIndex + 1) % planes.length,
-      (store.currentIndex + 2) % planes.length,
-    ]
+    // Clear existing textures before resize
+    textures.forEach(texture => {
+      texture.dispose()
+    })
 
-    await window.ipcRenderer.invoke('resize-active-offscreen-windows', active, pixelWidth, pixelHeight)
+    // Ensure offscreen windows are resized
+    try {
+      const cssWidth = canvasRef.value?.clientWidth || window.innerWidth
+      const cssHeight = canvasRef.value?.clientHeight || window.innerHeight
+      const dpr = window.devicePixelRatio || 1
+      const maxTex = renderer.value?.capabilities?.maxTextureSize || 8192
 
-    // Re-enable painting for the active set so they emit fresh frames at the new size.
-    await updateActivePaintingWindows(active)
+      // Calculate safe dimensions that respect GPU limits
+      const backingWidth = Math.round(cssWidth * dpr)
+      const backingHeight = Math.round(cssHeight * dpr)
 
-    // Wait for at least one 'webview-frame' whose reported size matches the
-    // requested pixel dimensions to ensure we capture a correctly-sized
-    // texture before proceeding. Fall back after 2s.
-    await new Promise<void>((resolve) => {
-      const maxWait = 2000
-      const interval = 100
-      let waited = 0
+      let pixelWidth = cssWidth
+      let pixelHeight = cssHeight
 
-      const handler = (_event: any, data: any) => {
-        const size = data?.size
-        if (size && size.width === pixelWidth && size.height === pixelHeight) {
-          window.ipcRenderer.off('webview-frame', handler)
-          return resolve()
-        }
+      if (backingWidth > maxTex || backingHeight > maxTex) {
+        const scale = maxTex / Math.max(backingWidth, backingHeight)
+        pixelWidth = Math.max(1, Math.round(cssWidth * scale))
+        pixelHeight = Math.max(1, Math.round(cssHeight * scale))
+        console.warn('[Threewebview] Scaling down window size to respect GPU limits',
+          { original: { cssWidth, cssHeight, backingWidth, backingHeight },
+            scaled: { pixelWidth, pixelHeight, maxTex }
+          })
       }
 
-      window.ipcRenderer.on('webview-frame', handler)
+      // Resize only active windows
+      const active = [
+        store.currentIndex,
+        (store.currentIndex + 1) % planes.length,
+        (store.currentIndex + 2) % planes.length,
+      ]
 
-      const timer = setInterval(() => {
-        waited += interval
-        if (waited >= maxWait) {
-          clearInterval(timer)
-          window.ipcRenderer.off('webview-frame', handler)
-          console.warn('Timed out waiting for matching webview-frame after resize')
-          resolve()
-        }
-      }, interval)
-    })
+      await disablePaintingForIndices(active)
+      await window.ipcRenderer.invoke('resize-active-offscreen-windows', active, pixelWidth, pixelHeight)
+      await new Promise(res => setTimeout(res, 100))
+      await enablePaintingForIndices(active)
+      await new Promise(res => setTimeout(res, 500))
+
+      // Force texture updates
+      textures.forEach(texture => {
+        texture.needsUpdate = true
+      })
+
+    } catch (err) {
+      console.warn('[Threewebview] Resize error:', err)
+    }
   } catch (err) {
-    console.warn('Failed to request offscreen resize:', err)
+    console.error('[Threewebview] Fatal resize error:', err)
+  } finally {
+    isResizing.value = false
   }
 }
 
@@ -225,7 +285,11 @@ const animate = () => {
   }
 
   if (renderer.value && scene.value && camera.value) {
-    renderer.value.render(scene.value, camera.value)
+    try {
+      renderer.value.render(scene.value, camera.value)
+    } catch (err) {
+      console.error('[Threewebview] WebGL render error — will continue animation loop', err)
+    }
   }
 }
 
@@ -234,7 +298,32 @@ const updateActivePaintingWindows = async (indices: number[]) => {
   await window.ipcRenderer.invoke('set-active-painting-windows', indices)
 }
 
-const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
+const disablePaintingForIndices = async (indices: number[]) => {
+  // Disable painting individually to avoid races while resizing the backing
+  // surface. We call disable for each index and wait for the main process
+  // to stop painting before resizing.
+  for (const idx of indices) {
+    try {
+      await window.ipcRenderer.invoke('disable-painting', idx)
+      console.info(`[Threewebview] disabled painting for window ${idx}`)
+    } catch (err) {
+      console.warn(`[Threewebview] failed to disable painting for ${idx}`, err)
+    }
+  }
+}
+
+const enablePaintingForIndices = async (indices: number[]) => {
+  for (const idx of indices) {
+    try {
+      await window.ipcRenderer.invoke('enable-painting', idx)
+      console.info(`[Threewebview] enabled painting for window ${idx}`)
+    } catch (err) {
+      console.warn(`[Threewebview] failed to enable painting for ${idx}`, err)
+    }
+  }
+}
+
+const transition = async (targetIndex: number, type: TransitionType) => {
   // Guard against multiple transitions and transitioning to current page
   if (store.isTransitioning || targetIndex === store.currentIndex) {
     return
@@ -377,11 +466,29 @@ const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) 
 
 const handleWebviewFrame = (_event: any, data: any) => {
   const { index } = data
-  // Only mark as loaded when we receive the FIRST frame
-  if (!store.setupMode && !loadedTextures.value.has(index)) {
-    console.log(`Texture ${index} received first frame`)
+
+  // Only mark as loaded when we receive the FIRST frame AND the texture
+  // has actually been updated with an image. Previously we marked loaded
+  // as soon as an IPC frame arrived which could be ignored by the
+  // composable (size mismatch) — resulting in the slideshow starting with
+  // black textures.
+  const tex = textures[index]
+  // Allow a one-line explicit-any here because THREE.Texture's `source` has
+  // internal typings we don't need to import; we only want to check for the
+  // presence of `.data.width` safely.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const hasImage = !!(tex && (tex.image || ((tex.source as any)?.data && (tex.source as any).data.width)))
+
+  if (!store.setupMode && !loadedTextures.value.has(index) && hasImage) {
+    console.log(`Texture ${index} received first frame (applied to THREE.Texture)`)
     loadedTextures.value.add(index)
     checkAllTexturesLoaded()
+    return
+  }
+
+  // Helpful debug when frames arrive but composable hasn't applied them yet
+  if (!hasImage) {
+    console.debug(`[Threewebview] frame arrived for index ${index} but texture not set yet`)
   }
 }
 

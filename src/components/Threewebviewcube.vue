@@ -150,14 +150,18 @@ const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
 
   if (!textures[index]) return
 
+  const tex = textures[index]
+
   // Create image from buffer
-  const blob = new Blob([buffer], { type: 'image/jpeg' })
+  // Cast to any to allow ArrayBuffer|SharedArrayBuffer union at runtime
+  const blob = new Blob([buffer as any], { type: 'image/jpeg' })
   const url = URL.createObjectURL(blob)
 
   const img = new Image()
   img.onload = () => {
-    textures[index].image = img
-    textures[index].needsUpdate = true
+    if (!tex) return
+    tex.image = img
+    tex.needsUpdate = true
     URL.revokeObjectURL(url)
   }
   img.src = url

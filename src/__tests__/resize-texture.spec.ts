@@ -116,14 +116,14 @@ describe('useWebviewFrames resize handling', () => {
 
     // After handler runs, texture.image should be the canvas we created
     expect(callbackCalled).toBe(true)
-    expect(textures[0].image).toBeDefined()
-    // The mocked canvas stores width/height
-    expect((textures[0].image as any).width).toBe(800)
-    expect((textures[0].image as any).height).toBe(600)
+  expect(textures[0]?.image).toBeDefined()
+  // The mocked canvas stores width/height
+  expect(((textures[0] as any)?.image as any)?.width).toBe(800)
+  expect(((textures[0] as any)?.image as any)?.height).toBe(600)
 
     // Check texture filtering
-    expect(textures[0].minFilter).toBe(THREE.NearestFilter)
-    expect(textures[0].magFilter).toBe(THREE.NearestFilter)
-    expect(textures[0].generateMipmaps).toBe(false)
+  expect((textures[0] as any)?.minFilter).toBe(THREE.NearestFilter)
+  expect((textures[0] as any)?.magFilter).toBe(THREE.NearestFilter)
+  expect((textures[0] as any)?.generateMipmaps).toBe(false)
   })
 })
