@@ -6,6 +6,7 @@ export class OffscreenRenderer {
   private readonly windows: Map<number, BrowserWindow> = new Map()
   private readonly config: AppConfig
   private readonly windowManager: WindowManager
+  private readonly paintingEnabled: Set<number> = new Set()
 
   constructor(config: AppConfig, windowManager: WindowManager) {
     this.config = config
@@ -30,12 +31,19 @@ export class OffscreenRenderer {
 
       this.setupPaintHandler(offscreenWin, index)
       this.setupLoadHandlers(offscreenWin, index, url)
-      this.startPainting(offscreenWin)
+
+      // Only enable painting for the first window initially
+      if (index === 0) {
+        this.enablePainting(index)
+      }
     })
   }
 
   private setupPaintHandler(window: BrowserWindow, index: number): void {
     window.webContents.on('paint', (event, dirty, image) => {
+      // Only send frames if painting is enabled for this window
+      if (!this.paintingEnabled.has(index)) return
+
       const buffer = image.toJPEG(this.config.rendering.jpegQuality)
 
       this.windowManager.sendToRenderer('webview-frame', {
@@ -57,8 +65,36 @@ export class OffscreenRenderer {
     })
   }
 
-  private startPainting(window: BrowserWindow): void {
-    window.webContents.setFrameRate(this.config.rendering.frameRate)
+  enablePainting(index: number): void {
+    const window = this.windows.get(index)
+    if (window && !window.isDestroyed() && !this.paintingEnabled.has(index)) {
+      this.paintingEnabled.add(index)
+      window.webContents.setFrameRate(this.config.rendering.frameRate)
+      console.log(`Enabled painting for window ${index}`)
+    }
+  }
+
+  disablePainting(index: number): void {
+    const window = this.windows.get(index)
+    if (window && !window.isDestroyed() && this.paintingEnabled.has(index)) {
+      this.paintingEnabled.delete(index)
+      window.webContents.setFrameRate(0) // Stop painting
+      console.log(`Disabled painting for window ${index}`)
+    }
+  }
+
+  setActivePaintingWindows(indices: number[]): void {
+    // Disable all
+    this.windows.forEach((_, index) => {
+      if (!indices.includes(index)) {
+        this.disablePainting(index)
+      }
+    })
+
+    // Enable only specified indices
+    indices.forEach((index) => {
+      this.enablePainting(index)
+    })
   }
 
   reload(index: number): void {
@@ -82,6 +118,7 @@ export class OffscreenRenderer {
       }
     })
     this.windows.clear()
+    this.paintingEnabled.clear()
   }
 
   getWindows(): Map<number, BrowserWindow> {

@@ -19,7 +19,8 @@ const defaultConfig = {
     transitionDuration: 2500
   },
   rendering: {
-    frameRate: 30,
+    frameRate: 1,
+    // Reduced from 30 to 1fps
     jpegQuality: 85
   }
 };
@@ -173,6 +174,7 @@ class OffscreenRenderer {
   windows = /* @__PURE__ */ new Map();
   config;
   windowManager;
+  paintingEnabled = /* @__PURE__ */ new Set();
   constructor(config, windowManager2) {
     this.config = config;
     this.windowManager = windowManager2;
@@ -193,11 +195,14 @@ class OffscreenRenderer {
       this.windows.set(index, offscreenWin);
       this.setupPaintHandler(offscreenWin, index);
       this.setupLoadHandlers(offscreenWin, index, url);
-      this.startPainting(offscreenWin);
+      if (index === 0) {
+        this.enablePainting(index);
+      }
     });
   }
   setupPaintHandler(window, index) {
     window.webContents.on("paint", (event, dirty, image) => {
+      if (!this.paintingEnabled.has(index)) return;
       const buffer = image.toJPEG(this.config.rendering.jpegQuality);
       this.windowManager.sendToRenderer("webview-frame", {
         index,
@@ -215,8 +220,31 @@ class OffscreenRenderer {
       console.error(`Offscreen window ${index} failed to load: ${errorDescription}`);
     });
   }
-  startPainting(window) {
-    window.webContents.setFrameRate(this.config.rendering.frameRate);
+  enablePainting(index) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed() && !this.paintingEnabled.has(index)) {
+      this.paintingEnabled.add(index);
+      window.webContents.setFrameRate(this.config.rendering.frameRate);
+      console.log(`Enabled painting for window ${index}`);
+    }
+  }
+  disablePainting(index) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed() && this.paintingEnabled.has(index)) {
+      this.paintingEnabled.delete(index);
+      window.webContents.setFrameRate(0);
+      console.log(`Disabled painting for window ${index}`);
+    }
+  }
+  setActivePaintingWindows(indices) {
+    this.windows.forEach((_, index) => {
+      if (!indices.includes(index)) {
+        this.disablePainting(index);
+      }
+    });
+    indices.forEach((index) => {
+      this.enablePainting(index);
+    });
   }
   reload(index) {
     const window = this.windows.get(index);
@@ -237,6 +265,7 @@ class OffscreenRenderer {
       }
     });
     this.windows.clear();
+    this.paintingEnabled.clear();
   }
   getWindows() {
     return this.windows;
@@ -274,6 +303,15 @@ class IPCHandlers {
     ipcMain.handle("navigate-webview", (event, index, url) => {
       this.offscreenRenderer.navigate(index, url);
     });
+    ipcMain.handle("set-active-painting-windows", (event, indices) => {
+      this.offscreenRenderer.setActivePaintingWindows(indices);
+    });
+    ipcMain.handle("enable-painting", (event, index) => {
+      this.offscreenRenderer.enablePainting(index);
+    });
+    ipcMain.handle("disable-painting", (event, index) => {
+      this.offscreenRenderer.disablePainting(index);
+    });
   }
   unregister() {
     ipcMain.removeHandler("get-webview-urls");
@@ -281,6 +319,9 @@ class IPCHandlers {
     ipcMain.removeHandler("finish-setup");
     ipcMain.removeHandler("reload-webview");
     ipcMain.removeHandler("navigate-webview");
+    ipcMain.removeHandler("set-active-painting-windows");
+    ipcMain.removeHandler("enable-painting");
+    ipcMain.removeHandler("disable-painting");
   }
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

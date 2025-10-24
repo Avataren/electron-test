@@ -48,6 +48,19 @@ export class IPCHandlers {
     ipcMain.handle('navigate-webview', (event, index: number, url: string) => {
       this.offscreenRenderer.navigate(index, url)
     })
+
+    // New handlers for controlling painting
+    ipcMain.handle('set-active-painting-windows', (event, indices: number[]) => {
+      this.offscreenRenderer.setActivePaintingWindows(indices)
+    })
+
+    ipcMain.handle('enable-painting', (event, index: number) => {
+      this.offscreenRenderer.enablePainting(index)
+    })
+
+    ipcMain.handle('disable-painting', (event, index: number) => {
+      this.offscreenRenderer.disablePainting(index)
+    })
   }
 
   unregister(): void {
@@ -56,5 +69,8 @@ export class IPCHandlers {
     ipcMain.removeHandler('finish-setup')
     ipcMain.removeHandler('reload-webview')
     ipcMain.removeHandler('navigate-webview')
+    ipcMain.removeHandler('set-active-painting-windows')
+    ipcMain.removeHandler('enable-painting')
+    ipcMain.removeHandler('disable-painting')
   }
 }

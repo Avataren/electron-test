@@ -22,8 +22,13 @@ export function useWebviewFrames(textures: THREE.Texture[]) {
 
     const img = new Image()
     img.onload = () => {
+      // Only update texture when we have valid image data
       textures[index].image = img
       textures[index].needsUpdate = true
+      URL.revokeObjectURL(url)
+    }
+    img.onerror = () => {
+      console.error(`Failed to load image for texture ${index}`)
       URL.revokeObjectURL(url)
     }
     img.src = url

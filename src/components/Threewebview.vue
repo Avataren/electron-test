@@ -10,6 +10,9 @@ import { calculatePlaneSize } from '../utils/geometry'
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const store = useWebviewStore()
+const loadedTextures = ref<Set<number>>(new Set())
+const allTexturesLoaded = ref(false)
+const loadingProgress = ref(0)
 
 const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
@@ -37,6 +40,10 @@ const prevSetupPage = () => {
 
 const finishSetup = async () => {
   store.setSetupMode(false)
+  // Reset loading state
+  loadedTextures.value.clear()
+  allTexturesLoaded.value = false
+  loadingProgress.value = 0
   await window.ipcRenderer.invoke('finish-setup')
 }
 
@@ -56,6 +63,7 @@ const createPlanes = () => {
     texture.minFilter = THREE.LinearFilter
     texture.magFilter = THREE.LinearFilter
     texture.colorSpace = THREE.LinearSRGBColorSpace
+    // Don't mark as needing update until we have image data
     textures.push(texture)
 
     const material = new THREE.MeshBasicMaterial({
@@ -95,6 +103,8 @@ const animate = () => {
     const isComplete = transitionManager.update()
     if (isComplete) {
       store.setTransitioning(false)
+      // After transition, only paint the current window
+      updateActivePaintingWindows([store.currentIndex])
     }
   }
 
@@ -103,11 +113,18 @@ const animate = () => {
   }
 }
 
+const updateActivePaintingWindows = async (indices: number[]) => {
+  await window.ipcRenderer.invoke('set-active-painting-windows', indices)
+}
+
 const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
   if (store.isTransitioning || targetIndex === store.currentIndex) return
 
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
+
+  // Enable painting for both current and target windows during transition
+  await updateActivePaintingWindows([fromIndex, targetIndex])
 
   planes[targetIndex].visible = true
 
@@ -120,6 +137,8 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
 }
 
 const rotateWebview = () => {
+  if (!allTexturesLoaded.value) return // Don't rotate until all textures are loaded
+
   const nextIndex = (store.currentIndex + 1) % urls.value.length
   const nextType = transitionManager?.getNextType() || 'rain'
 
@@ -133,13 +152,44 @@ const refreshWebviews = async () => {
   }
 }
 
-const handleSetupComplete = () => {
-  startTimers()
+const checkAllTexturesLoaded = () => {
+  if (loadedTextures.value.size === urls.value.length && !allTexturesLoaded.value) {
+    allTexturesLoaded.value = true
+    console.log('All textures loaded, starting slideshow')
+    // Now only enable painting for the first window
+    updateActivePaintingWindows([0])
+  }
+  loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
+}
+
+const handleSetupComplete = async () => {
+  console.log('Setup complete, loading all textures...')
+  // Enable painting for ALL windows initially to load textures
+  const allIndices = Array.from({ length: urls.value.length }, (_, i) => i)
+  await updateActivePaintingWindows(allIndices)
+}
+
+const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) => {
+  console.log(`Webview ${data.index} loaded: ${data.url}`)
+  if (!store.setupMode) {
+    loadedTextures.value.add(data.index)
+    checkAllTexturesLoaded()
+  }
+}
+
+const handleWebviewFrame = (_event: any, data: any) => {
+  const { index } = data
+  if (!store.setupMode && !loadedTextures.value.has(index)) {
+    loadedTextures.value.add(index)
+    checkAllTexturesLoaded()
+  }
 }
 
 const { startTimers, stopTimers } = useRotationTimer(rotateWebview, refreshWebviews)
 
 const handleDotClick = (index: number) => {
+  if (!allTexturesLoaded.value) return // Don't allow transitions until loaded
+
   const nextType = transitionManager?.getNextType() || 'rain'
   transition(index, nextType)
   store.toggleTransitionType()
@@ -151,13 +201,38 @@ onMounted(async () => {
   createPlanes()
   animate()
 
+  // Set up custom frame listener first
+  window.ipcRenderer.on('webview-frame', handleWebviewFrame)
+  window.ipcRenderer.on('webview-loaded', handleWebviewLoaded)
   setupListeners()
+
   window.addEventListener('resize', handleResize)
-  window.ipcRenderer.on('setup-complete', handleSetupComplete)
+  window.ipcRenderer.on('setup-complete', async () => {
+    await handleSetupComplete()
+    // Wait for all textures to load before starting timers
+    const checkInterval = setInterval(() => {
+      if (allTexturesLoaded.value) {
+        clearInterval(checkInterval)
+        startTimers()
+      }
+    }, 100)
+
+    // Timeout after 10 seconds
+    setTimeout(() => {
+      clearInterval(checkInterval)
+      if (!allTexturesLoaded.value) {
+        console.warn('Timeout waiting for textures, starting anyway')
+        allTexturesLoaded.value = true
+        startTimers()
+      }
+    }, 10000)
+  })
 })
 
 onUnmounted(() => {
   stopTimers()
+  window.ipcRenderer.off('webview-frame', handleWebviewFrame)
+  window.ipcRenderer.off('webview-loaded', handleWebviewLoaded)
   removeListeners()
   window.removeEventListener('resize', handleResize)
   window.ipcRenderer.off('setup-complete', handleSetupComplete)
@@ -206,9 +281,21 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Loading overlay -->
+    <div v-if="!store.setupMode && !allTexturesLoaded" class="loading-overlay">
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading pages...</div>
+        <div class="loading-progress">{{ loadingProgress }}%</div>
+        <div class="loading-bar">
+          <div class="loading-bar-fill" :style="{ width: loadingProgress + '%' }"></div>
+        </div>
+      </div>
+    </div>
+
     <canvas ref="canvasRef" class="three-canvas" :class="{ hidden: store.setupMode }"></canvas>
 
-    <div v-if="!store.setupMode" class="indicator">
+    <div v-if="!store.setupMode && allTexturesLoaded" class="indicator">
       <div
         v-for="(_, index) in urls.length"
         :key="index"
@@ -218,7 +305,10 @@ onUnmounted(() => {
       ></div>
     </div>
 
-    <div v-if="store.isTransitioning && !store.setupMode" class="transition-indicator">
+    <div
+      v-if="store.isTransitioning && !store.setupMode && allTexturesLoaded"
+      class="transition-indicator"
+    >
       Transition {{ store.currentTransitionType === 'rain' ? '1: Rain' : '2: Slices' }}
     </div>
   </div>
@@ -241,6 +331,68 @@ onUnmounted(() => {
 
 .three-canvas.hidden {
   display: none;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.loading-content {
+  text-align: center;
+  color: white;
+}
+
+.loading-spinner {
+  width: 50px;
+  height: 50px;
+  border: 4px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 20px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-size: 20px;
+  margin-bottom: 10px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.loading-progress {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 15px;
+}
+
+.loading-bar {
+  width: 200px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.loading-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea, #764ba2);
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 
 .setup-control-bar {
