@@ -19,6 +19,12 @@ interface WebviewFrame {
   size: { width: number; height: number }
 }
 
+interface Fragment {
+  mesh: THREE.Mesh
+  velocity: THREE.Vector3
+  rotationSpeed: THREE.Vector3
+}
+
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const currentIndex = ref(0)
 const isTransitioning = ref(false)
@@ -31,9 +37,14 @@ const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
 let urls: string[] = []
 
-// Rotation interval
+// Fragment system for transition 1 (rain effect)
+const fragments: Fragment[] = []
+const GRID_COLS = 20
+const GRID_ROWS = 10
+
+// Timing
 const ROTATION_INTERVAL = 10000
-const TRANSITION_DURATION = 1500
+const TRANSITION_DURATION = 2500
 let rotationTimer: number | null = null
 
 // Refresh webviews periodically (every 30 seconds)
@@ -59,8 +70,11 @@ const initThreeJS = () => {
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.setPixelRatio(window.devicePixelRatio)
 
-  // Create planes for each webview
-  const planeGeometry = new THREE.PlaneGeometry(6, 3.375) // 16:9 aspect ratio
+  // Create fullscreen planes for each webview (stacked at same position)
+  const aspect = window.innerWidth / window.innerHeight
+  const planeHeight = 5
+  const planeWidth = planeHeight * aspect
+  const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight)
 
   urls.forEach((url, index) => {
     // Create texture
@@ -72,12 +86,12 @@ const initThreeJS = () => {
     // Create material with texture
     const material = new THREE.MeshBasicMaterial({
       map: texture,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     })
 
-    // Create mesh
+    // Create mesh - all at same position, stacked
     const plane = new THREE.Mesh(planeGeometry, material)
-    plane.position.x = index * 10 // Space them out
+    plane.position.set(0, 0, -index * 0.01) // Slight z offset to prevent z-fighting
     plane.visible = index === 0 // Only show first plane initially
 
     planes.push(plane)
@@ -95,15 +109,60 @@ const onWindowResize = () => {
   camera.aspect = window.innerWidth / window.innerHeight
   camera.updateProjectionMatrix()
   renderer.setSize(window.innerWidth, window.innerHeight)
+
+  // Update plane sizes to maintain fullscreen
+  const aspect = window.innerWidth / window.innerHeight
+  const planeHeight = 5
+  const planeWidth = planeHeight * aspect
+
+  planes.forEach((plane) => {
+    plane.geometry.dispose()
+    plane.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight)
+  })
 }
 
 const animate = () => {
   requestAnimationFrame(animate)
+
+  if (isTransitioning.value && fragments.length > 0) {
+    // Animate fragments falling
+    fragments.forEach((fragment) => {
+      // Apply gravity
+      fragment.velocity.y -= 0.015
+
+      // Update position
+      fragment.mesh.position.add(fragment.velocity)
+
+      // Update rotation
+      fragment.mesh.rotation.x += fragment.rotationSpeed.x
+      fragment.mesh.rotation.y += fragment.rotationSpeed.y
+      fragment.mesh.rotation.z += fragment.rotationSpeed.z
+
+      // Fade out as they fall
+      if (fragment.mesh.position.y < -3) {
+        const fadeStart = -3
+        const fadeEnd = -8
+        const fadeProgress = Math.max(
+          0,
+          Math.min(1, (fragment.mesh.position.y - fadeStart) / (fadeEnd - fadeStart)),
+        )
+        ;(fragment.mesh.material as THREE.MeshBasicMaterial).opacity = fadeProgress
+      }
+    })
+
+    // Check if transition is complete (all fragments off screen)
+    const allOffScreen = fragments.every((f) => f.mesh.position.y < -8)
+    if (allOffScreen) {
+      cleanupFragments()
+      isTransitioning.value = false
+    }
+  }
+
   renderer.render(scene, camera)
 }
 
 const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
-  const { index, buffer, size } = data
+  const { index, buffer } = data
 
   if (!textures[index]) return
 
@@ -120,60 +179,108 @@ const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
   img.src = url
 }
 
-const transitionToIndex = async (targetIndex: number) => {
+const createFragments = (fromIndex: number) => {
+  const fromPlane = planes[fromIndex]
+  const aspect = window.innerWidth / window.innerHeight
+  const planeHeight = 5
+  const planeWidth = planeHeight * aspect
+
+  const fragmentWidth = planeWidth / GRID_COLS
+  const fragmentHeight = planeHeight / GRID_ROWS
+
+  for (let row = 0; row < GRID_ROWS; row++) {
+    for (let col = 0; col < GRID_COLS; col++) {
+      // Create fragment geometry
+      const geometry = new THREE.PlaneGeometry(fragmentWidth, fragmentHeight)
+
+      // Calculate UV coordinates for this fragment
+      const uvAttribute = geometry.attributes.uv
+      const uStart = col / GRID_COLS
+      const uEnd = (col + 1) / GRID_COLS
+      const vStart = 1 - (row + 1) / GRID_ROWS // Flip V coordinate
+      const vEnd = 1 - row / GRID_ROWS
+
+      uvAttribute.setXY(0, uStart, vEnd)
+      uvAttribute.setXY(1, uEnd, vEnd)
+      uvAttribute.setXY(2, uStart, vStart)
+      uvAttribute.setXY(3, uEnd, vStart)
+
+      // Clone material and texture for fragment
+      const material = new THREE.MeshBasicMaterial({
+        map: textures[fromIndex].clone(),
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 1,
+      })
+      material.map!.needsUpdate = true
+
+      // Create fragment mesh
+      const fragment = new THREE.Mesh(geometry, material)
+
+      // Position fragment at correct grid location
+      const x = -planeWidth / 2 + fragmentWidth / 2 + col * fragmentWidth
+      const y = planeHeight / 2 - fragmentHeight / 2 - row * fragmentHeight
+      fragment.position.set(x, y, fromPlane.position.z + 0.01)
+
+      // Random initial velocity
+      const velocity = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.02, // Small horizontal drift
+        Math.random() * -0.01, // Initial downward velocity (small)
+        (Math.random() - 0.5) * 0.01, // Small depth variation
+      )
+
+      // Random rotation speeds
+      const rotationSpeed = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.05,
+        (Math.random() - 0.5) * 0.05,
+        (Math.random() - 0.5) * 0.05,
+      )
+
+      scene.add(fragment)
+      fragments.push({ mesh: fragment, velocity, rotationSpeed })
+    }
+  }
+}
+
+const cleanupFragments = () => {
+  fragments.forEach((fragment) => {
+    scene.remove(fragment.mesh)
+    fragment.mesh.geometry.dispose()
+    if (fragment.mesh.material instanceof THREE.Material) {
+      if (fragment.mesh.material.map) {
+        fragment.mesh.material.map.dispose()
+      }
+      fragment.mesh.material.dispose()
+    }
+  })
+  fragments.length = 0
+}
+
+const transitionRain = async (targetIndex: number) => {
   if (isTransitioning.value || targetIndex === currentIndex.value) return
 
   isTransitioning.value = true
   const fromIndex = currentIndex.value
-  const fromPlane = planes[fromIndex]
-  const toPlane = planes[targetIndex]
 
-  // Make both planes visible
-  toPlane.visible = true
+  // Show the target plane behind
+  planes[targetIndex].visible = true
 
-  // Position the target plane
-  toPlane.position.set(10, 0, 0)
-  toPlane.rotation.set(0, 0, 0)
+  // Create fragments from current plane
+  createFragments(fromIndex)
 
-  // Animate transition
-  const startTime = Date.now()
-  const animate = () => {
-    const elapsed = Date.now() - startTime
-    const progress = Math.min(elapsed / TRANSITION_DURATION, 1)
+  // Hide the original plane
+  planes[fromIndex].visible = false
 
-    // Easing function (ease-in-out)
-    const eased =
-      progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2
+  // Update current index immediately
+  currentIndex.value = targetIndex
 
-    // Slide and rotate transition
-    fromPlane.position.x = -10 * eased
-    fromPlane.rotation.y = -Math.PI * 0.5 * eased
-
-    toPlane.position.x = 10 - 10 * eased
-    toPlane.rotation.y = Math.PI * 0.5 - Math.PI * 0.5 * eased
-
-    if (progress < 1) {
-      requestAnimationFrame(animate)
-    } else {
-      // Hide the old plane
-      fromPlane.visible = false
-      fromPlane.position.set(0, 0, 0)
-      fromPlane.rotation.set(0, 0, 0)
-
-      toPlane.position.set(0, 0, 0)
-      toPlane.rotation.set(0, 0, 0)
-
-      currentIndex.value = targetIndex
-      isTransitioning.value = false
-    }
-  }
-
-  animate()
+  // Animation happens in the animate loop
+  // Transition will complete when fragments are off screen
 }
 
 const rotateWebview = () => {
   const nextIndex = (currentIndex.value + 1) % urls.length
-  transitionToIndex(nextIndex)
+  transitionRain(nextIndex)
 }
 
 const refreshWebviews = async () => {
@@ -218,6 +325,9 @@ onUnmounted(() => {
   window.ipcRenderer.off('webview-frame', handleWebviewFrame)
   window.removeEventListener('resize', onWindowResize)
 
+  // Cleanup fragments
+  cleanupFragments()
+
   // Cleanup Three.js
   if (renderer) {
     renderer.dispose()
@@ -232,7 +342,7 @@ onUnmounted(() => {
 })
 
 const handleDotClick = (index: number) => {
-  transitionToIndex(index)
+  transitionRain(index)
 }
 </script>
 
@@ -251,8 +361,8 @@ const handleDotClick = (index: number) => {
       ></div>
     </div>
 
-    <!-- Loading indicator -->
-    <div v-if="isTransitioning" class="transition-indicator">Transitioning...</div>
+    <!-- Transition indicator -->
+    <div v-if="isTransitioning" class="transition-indicator">Transition 1: Rain</div>
   </div>
 </template>
 
