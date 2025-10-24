@@ -52,27 +52,12 @@ export class OffscreenRenderer {
       const bitmap: Buffer = image.toBitmap()
       const size = image.getSize()
 
-      // Try to reuse a SharedArrayBuffer for this window to avoid
-      // allocating a new SAB every frame. If the size changed, reallocate.
-      let sab = this.sharedBuffers.get(index)
-      if (!sab || sab.byteLength < bitmap.length) {
-        sab = new SharedArrayBuffer(bitmap.length)
-        this.sharedBuffers.set(index, sab)
-      }
-
-      // Copy into the shared buffer (one copy). Renderer will read from it
-      // directly without further copies.
-      const dest = new Uint8Array(sab)
-      dest.set(bitmap)
-
-      // Use postMessage with transfer so we can pass the SharedArrayBuffer
-      // without structured cloning errors.
-      try {
-        this.windowManager.postMessageToRenderer('webview-frame', { index, buffer: sab, size, format: 'sabs' }, [sab])
-      } catch (err) {
-        // Fallback to normal send (may fail if SAB cannot be serialized)
-        this.windowManager.sendToRenderer('webview-frame', { index, buffer: sab, size, format: 'sabs' })
-      }
+      // Copy the native bitmap into a Node Buffer and send via IPC. Buffers
+      // are serializable by Electron's IPC and avoid the SharedArrayBuffer
+      // serialization issues on some platforms/configs. This is one copy per
+      // frame but is reliable across different Electron environments.
+      const buf = Buffer.from(bitmap)
+      this.windowManager.sendToRenderer('webview-frame', { index, buffer: buf, size, format: 'raw' })
     })
   }
 

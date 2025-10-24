@@ -69,6 +69,11 @@ class WindowManager {
       this.window.webContents.send(channel, ...args);
     }
   }
+  /**
+   * Send a message to the renderer using postMessage which supports
+   * transfer lists (ArrayBuffers, MessagePorts). Use this when sending
+   * large binary buffers like SharedArrayBuffer to avoid serialization errors.
+   */
   postMessageToRenderer(channel, message, transfer) {
     if (this.isValid()) {
       try {
@@ -222,11 +227,8 @@ class OffscreenRenderer {
       }
       const dest = new Uint8Array(sab);
       dest.set(bitmap);
-      try {
-        this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: sab, size, format: "sabs" }, [sab]);
-      } catch (e) {
-        this.windowManager.sendToRenderer("webview-frame", { index, buffer: sab, size, format: "sabs" });
-      }
+        const buf = Buffer.from(dest.buffer);
+        this.windowManager.sendToRenderer("webview-frame", { index, buffer: buf, size, format: "raw" });
     });
   }
   setupLoadHandlers(window, index, url) {
