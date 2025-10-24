@@ -17,7 +17,7 @@ interface DidFailLoadEvent extends Event {
   errorDescription: string
 }
 
-const url = ref('https://example.com')
+const url = ref('https://cubed.no')
 const webviewRef = ref<WebviewElement | null>(null)
 const isLoading = ref(true)
 const canGoBack = ref(false)

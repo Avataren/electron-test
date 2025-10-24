@@ -6,7 +6,6 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
@@ -14,14 +13,24 @@ export default defineConfig({
     electron([
       {
         // Main process entry point
-        entry: 'src/main.ts',
+        entry: 'electron/main.ts',
       },
       {
         // Preload script
-        entry: 'src/preload.ts',
+        entry: 'electron/preload.ts',
         onstart({ startup }) {
-          // Only start Electron app once
           startup()
+        },
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              output: {
+                format: 'cjs', // Changed from 'es' to 'cjs'
+                entryFileNames: '[name].js', // Changed from .mjs to .js
+              },
+            },
+          },
         },
       },
     ]),

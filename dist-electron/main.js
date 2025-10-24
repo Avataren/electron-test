@@ -14,10 +14,8 @@ function createWindow() {
     height: 800,
     icon: path.join(process.env.VITE_PUBLIC || "", "favicon.ico"),
     webPreferences: {
-      preload: path.join(__dirname, "preload.mjs"),
-      // Enable webview tag
+      preload: path.join(__dirname, "preload.js"),
       webviewTag: true,
-      // For security, keep these settings
       nodeIntegration: false,
       contextIsolation: true
     }

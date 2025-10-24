@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import WebViewPage from '@/components/WebViewPage.vue'
+import WebviewPage from '@/components/WebviewPage.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -7,7 +7,7 @@ const router = createRouter({
     {
       path: '/',
       name: 'webview',
-      component: WebViewPage,
+      component: WebviewPage,
     },
   ],
 })
