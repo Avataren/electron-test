@@ -248,12 +248,11 @@ const checkAllTexturesLoaded = () => {
     // Keep current (0) and next (1) window painting
     updateActivePaintingWindows([0, 1])
 
-    // Wait 3 seconds after loading to ensure windows have painted multiple frames
-    // At 2fps, this gives us 6 frames per window to build up texture data
+    // Wait 2 seconds after loading to ensure windows have painted multiple frames
     setTimeout(() => {
       console.log('Starting rotation timer after texture warmup period')
       startTimers()
-    }, 3000)
+    }, 2000)
   }
   loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
 }

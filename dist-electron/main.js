@@ -19,8 +19,7 @@ const defaultConfig = {
     transitionDuration: 2500
   },
   rendering: {
-    frameRate: 2,
-    // 2fps for reliable texture updates
+    frameRate: 10,
     jpegQuality: 85
   }
 };
