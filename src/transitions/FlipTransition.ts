@@ -10,7 +10,7 @@ export class FlipTransition extends BaseTransition {
     const { width, height } = this.planeConfig
     const geometry = new THREE.PlaneGeometry(width, height)
 
-    const texture = this.textures[fromIndex]?.clone() || null
+    const texture = this.textures[fromIndex]
     if (!texture) return
 
     texture.colorSpace = THREE.LinearSRGBColorSpace
@@ -61,9 +61,7 @@ export class FlipTransition extends BaseTransition {
       this.planeMesh.geometry.dispose()
 
       const material = this.planeMesh.material as THREE.MeshBasicMaterial
-      if (material.map) {
-        material.map.dispose()
-      }
+      // Do not dispose the shared texture (material.map). Only dispose the material.
       material.dispose()
 
       this.planeMesh = null

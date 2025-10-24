@@ -62,6 +62,23 @@ export class WindowManager {
     }
   }
 
+  /**
+   * Send a message to the renderer using postMessage which supports
+   * transfer lists (ArrayBuffers, MessagePorts). Use this when sending
+   * large binary buffers like SharedArrayBuffer to avoid serialization errors.
+   */
+  postMessageToRenderer(channel: string, message: any, transfer?: any[]): void {
+    if (this.isValid()) {
+      try {
+        // webContents.postMessage(channel, message, transfer)
+        this.window!.webContents.postMessage(channel, message, transfer || [])
+      } catch (err) {
+        // Fallback to send which will attempt structured clone (may fail for SAB)
+        this.window!.webContents.send(channel, message)
+      }
+    }
+  }
+
   getContentBounds() {
     if (this.isValid()) {
       return this.window!.getContentBounds()

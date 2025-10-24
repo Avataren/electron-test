@@ -33,18 +33,21 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
     renderer.value.outputColorSpace = THREE.LinearSRGBColorSpace
   }
 
-  const onResize = () => {
+  const onResize = (contentAspect?: number) => {
     if (!camera.value || !renderer.value) return
 
     camera.value.aspect = window.innerWidth / window.innerHeight
     camera.value.updateProjectionMatrix()
     renderer.value.setSize(window.innerWidth, window.innerHeight)
 
-    return calculatePlaneSize({
-      fov: FOV,
-      distance: DISTANCE,
-      aspect: camera.value.aspect,
-    })
+    return calculatePlaneSize(
+      {
+        fov: FOV,
+        distance: DISTANCE,
+        aspect: camera.value.aspect,
+      },
+      contentAspect,
+    )
   }
 
   const dispose = () => {

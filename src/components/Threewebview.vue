@@ -22,28 +22,37 @@ let transitionManager: TransitionManager | null = null
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
 
+// Track the page aspect ratio (width / height) reported by the webviews so
+// plane sizing and resizes preserve the source aspect for 1:1 rendering.
+const pageAspect = ref<number | null>(null)
+
 const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
   textures,
   (index: number, size?: { width: number; height: number }) => {
     // Update timestamp when texture receives new frame
     textureUpdateTimestamps.value.set(index, Date.now())
 
-    // On first valid frame we may receive the page dimensions. Resize the
-    // plane geometry to match the webpage aspect so the texture maps 1:1
-    // to the visual plane. Use the first received page size (assumes pages
-    // share the same dimensions). This keeps the displayed content crisp
-    // when using nearest filtering.
+    // If we have a reported page size, compute its aspect and ensure planes
+    // and planeConfig match that aspect. Update whenever the reported page
+    // aspect changes significantly so the final rendered plane always maps
+    // 1:1 with the source.
     if (size && camera.value && planes.length > 0) {
-      // Only run once (first texture that reports size)
-      if (!planes[0].userData.pageSized) {
-        const pageAspect = size.width / size.height
+      const reportedAspect = size.width / size.height
+
+      // Update if we haven't sized yet or aspect changed by more than 0.5%
+      const shouldUpdate =
+        !pageAspect.value || Math.abs((reportedAspect - pageAspect.value) / (pageAspect.value || 1)) > 0.005
+
+      if (shouldUpdate) {
+        pageAspect.value = reportedAspect
+
         const newPlaneConfig = calculatePlaneSize(
           {
             fov: FOV,
             distance: DISTANCE,
             aspect: camera.value.aspect,
           },
-          pageAspect,
+          pageAspect.value,
         )
 
         planes.forEach((plane) => {
@@ -55,8 +64,13 @@ const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
           transitionManager.updatePlaneConfig(newPlaneConfig)
         }
 
-        // Mark as done so we don't repeatedly resize
-        planes[0].userData.pageSized = true
+        // If not transitioning, ensure only the active plane is visible to
+        // avoid double images when sizes change (maximize/restore races).
+        if (!store.isTransitioning) {
+          planes.forEach((plane, i) => {
+            plane.visible = i === store.currentIndex
+          })
+        }
       }
     }
   },
@@ -122,8 +136,8 @@ const createPlanes = () => {
   transitionManager = new TransitionManager(scene.value, textures, planeConfig)
 }
 
-const handleResize = () => {
-  const newPlaneConfig = onResize()
+const handleResize = async () => {
+  const newPlaneConfig = onResize(pageAspect.value ?? undefined)
   if (!newPlaneConfig) return
 
   planes.forEach((plane) => {
@@ -139,16 +153,55 @@ const handleResize = () => {
   // that subsequent 'paint' events produce textures at the new resolution.
   // Use devicePixelRatio to convert CSS pixels to device pixels.
   try {
-    const pixelWidth = Math.round(window.innerWidth * window.devicePixelRatio)
-    const pixelHeight = Math.round(window.innerHeight * window.devicePixelRatio)
+    const dpr = window.devicePixelRatio || 1
 
-    // Resize offscreen windows in the main process
-    window.ipcRenderer.invoke('resize-offscreen-windows', pixelWidth, pixelHeight)
+    // Prefer canvas element size if available so we match the actual render target
+    const cssWidth = canvasRef.value?.clientWidth || window.innerWidth
+    const cssHeight = canvasRef.value?.clientHeight || window.innerHeight
 
-    // Re-enable painting for the active set so they emit fresh frames at
-    // the new size. Keep current, next and next+1 painting like initial logic.
-    const active = [store.currentIndex, (store.currentIndex + 1) % planes.length, (store.currentIndex + 2) % planes.length]
-    updateActivePaintingWindows(active)
+    const pixelWidth = Math.max(1, Math.round(cssWidth * dpr))
+    const pixelHeight = Math.max(1, Math.round(cssHeight * dpr))
+
+    // Resize only active offscreen windows to reduce work and IPC traffic.
+    const active = [
+      store.currentIndex,
+      (store.currentIndex + 1) % planes.length,
+      (store.currentIndex + 2) % planes.length,
+    ]
+
+    await window.ipcRenderer.invoke('resize-active-offscreen-windows', active, pixelWidth, pixelHeight)
+
+    // Re-enable painting for the active set so they emit fresh frames at the new size.
+    await updateActivePaintingWindows(active)
+
+    // Wait for at least one 'webview-frame' whose reported size matches the
+    // requested pixel dimensions to ensure we capture a correctly-sized
+    // texture before proceeding. Fall back after 2s.
+    await new Promise<void>((resolve) => {
+      const maxWait = 2000
+      const interval = 100
+      let waited = 0
+
+      const handler = (_event: any, data: any) => {
+        const size = data?.size
+        if (size && size.width === pixelWidth && size.height === pixelHeight) {
+          window.ipcRenderer.off('webview-frame', handler)
+          return resolve()
+        }
+      }
+
+      window.ipcRenderer.on('webview-frame', handler)
+
+      const timer = setInterval(() => {
+        waited += interval
+        if (waited >= maxWait) {
+          clearInterval(timer)
+          window.ipcRenderer.off('webview-frame', handler)
+          console.warn('Timed out waiting for matching webview-frame after resize')
+          resolve()
+        }
+      }, interval)
+    })
   } catch (err) {
     console.warn('Failed to request offscreen resize:', err)
   }

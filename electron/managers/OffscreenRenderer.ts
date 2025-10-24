@@ -7,6 +7,8 @@ export class OffscreenRenderer {
   private readonly config: AppConfig
   private readonly windowManager: WindowManager
   private readonly paintingEnabled: Set<number> = new Set()
+  // Reuse SharedArrayBuffers per window to avoid reallocating on every frame
+  private readonly sharedBuffers: Map<number, SharedArrayBuffer> = new Map()
 
   constructor(config: AppConfig, windowManager: WindowManager) {
     this.config = config
@@ -44,13 +46,33 @@ export class OffscreenRenderer {
       // Only send frames if painting is enabled for this window
       if (!this.paintingEnabled.has(index)) return
 
-      const buffer = image.toJPEG(this.config.rendering.jpegQuality)
+      // Send raw bitmap data (BGRA) to the renderer so we can avoid
+      // lossy JPEG encoding and retain exact pixel data and dimensions.
+      // NativeImage.toBitmap returns a Buffer with BGRA order.
+      const bitmap: Buffer = image.toBitmap()
+      const size = image.getSize()
 
-      this.windowManager.sendToRenderer('webview-frame', {
-        index,
-        buffer: buffer,
-        size: image.getSize(),
-      })
+      // Try to reuse a SharedArrayBuffer for this window to avoid
+      // allocating a new SAB every frame. If the size changed, reallocate.
+      let sab = this.sharedBuffers.get(index)
+      if (!sab || sab.byteLength < bitmap.length) {
+        sab = new SharedArrayBuffer(bitmap.length)
+        this.sharedBuffers.set(index, sab)
+      }
+
+      // Copy into the shared buffer (one copy). Renderer will read from it
+      // directly without further copies.
+      const dest = new Uint8Array(sab)
+      dest.set(bitmap)
+
+      // Use postMessage with transfer so we can pass the SharedArrayBuffer
+      // without structured cloning errors.
+      try {
+        this.windowManager.postMessageToRenderer('webview-frame', { index, buffer: sab, size, format: 'sabs' }, [sab])
+      } catch (err) {
+        // Fallback to normal send (may fail if SAB cannot be serialized)
+        this.windowManager.sendToRenderer('webview-frame', { index, buffer: sab, size, format: 'sabs' })
+      }
     })
   }
 
@@ -120,6 +142,16 @@ export class OffscreenRenderer {
   resizeAll(width: number, height: number): void {
     this.windows.forEach((win) => {
       if (!win.isDestroyed()) {
+        win.setSize(width, height)
+      }
+    })
+  }
+
+  /** Resize only the provided indices. */
+  resizeIndices(indices: number[], width: number, height: number): void {
+    indices.forEach((i) => {
+      const win = this.windows.get(i)
+      if (win && !win.isDestroyed()) {
         win.setSize(width, height)
       }
     })

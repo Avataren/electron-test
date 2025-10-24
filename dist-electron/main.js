@@ -69,6 +69,15 @@ class WindowManager {
       this.window.webContents.send(channel, ...args);
     }
   }
+  postMessageToRenderer(channel, message, transfer) {
+    if (this.isValid()) {
+      try {
+        this.window.webContents.postMessage(channel, message, transfer || []);
+      } catch (err) {
+        this.window.webContents.send(channel, message);
+      }
+    }
+  }
   getContentBounds() {
     if (this.isValid()) {
       return this.window.getContentBounds();
@@ -174,6 +183,8 @@ class OffscreenRenderer {
   config;
   windowManager;
   paintingEnabled = /* @__PURE__ */ new Set();
+  // Reuse SharedArrayBuffers per window to avoid reallocating on every frame
+  sharedBuffers = /* @__PURE__ */ new Map();
   constructor(config, windowManager2) {
     this.config = config;
     this.windowManager = windowManager2;
@@ -202,12 +213,20 @@ class OffscreenRenderer {
   setupPaintHandler(window, index) {
     window.webContents.on("paint", (event, dirty, image) => {
       if (!this.paintingEnabled.has(index)) return;
-      const buffer = image.toJPEG(this.config.rendering.jpegQuality);
-      this.windowManager.sendToRenderer("webview-frame", {
-        index,
-        buffer,
-        size: image.getSize()
-      });
+      const bitmap = image.toBitmap();
+      const size = image.getSize();
+      let sab = this.sharedBuffers.get(index);
+      if (!sab || sab.byteLength < bitmap.length) {
+        sab = new SharedArrayBuffer(bitmap.length);
+        this.sharedBuffers.set(index, sab);
+      }
+      const dest = new Uint8Array(sab);
+      dest.set(bitmap);
+      try {
+        this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: sab, size, format: "sabs" }, [sab]);
+      } catch (e) {
+        this.windowManager.sendToRenderer("webview-frame", { index, buffer: sab, size, format: "sabs" });
+      }
     });
   }
   setupLoadHandlers(window, index, url) {
@@ -270,6 +289,15 @@ class OffscreenRenderer {
       }
     });
   }
+  /** Resize only the provided indices. */
+  resizeIndices(indices, width, height) {
+    indices.forEach((i) => {
+      const win = this.windows.get(i);
+      if (win && !win.isDestroyed()) {
+        win.setSize(width, height);
+      }
+    });
+  }
   navigate(index, url) {
     const window = this.windows.get(index);
     if (window && !window.isDestroyed()) {
@@ -326,6 +354,9 @@ class IPCHandlers {
     });
     ipcMain.handle("resize-offscreen-windows", (event, width, height) => {
       this.offscreenRenderer.resizeAll(width, height);
+    });
+    ipcMain.handle("resize-active-offscreen-windows", (event, indices, width, height) => {
+      this.offscreenRenderer.resizeIndices(indices, width, height);
     });
     ipcMain.handle("enable-painting", (event, index) => {
       this.offscreenRenderer.enablePainting(index);

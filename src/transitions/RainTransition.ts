@@ -20,8 +20,10 @@ export class RainTransition extends BaseTransition {
     const fragmentWidth = planeWidth / this.gridCols
     const fragmentHeight = planeHeight / this.gridRows
 
-    // Clone texture once for entire transition instead of 200 times
-    this.sharedTexture = this.textures[fromIndex]?.clone() || null
+    // Use the existing texture reference for accuracy and to avoid
+    // duplicating the image. Cloning textures can cause stale image
+    // data when the source texture is resized.
+    this.sharedTexture = this.textures[fromIndex] || null
     if (this.sharedTexture) {
       this.sharedTexture.colorSpace = THREE.LinearSRGBColorSpace
       this.sharedTexture.needsUpdate = true
@@ -109,16 +111,14 @@ export class RainTransition extends BaseTransition {
       this.scene.remove(fragment.mesh)
       fragment.mesh.geometry.dispose()
       if (fragment.mesh.material instanceof THREE.Material) {
-        // Don't dispose the shared texture here - we'll do it once below
+        // Dispose only the material/geometry. Do NOT dispose the shared
+        // texture because it's owned by the main textures array.
         fragment.mesh.material.dispose()
       }
     })
     this.fragments.length = 0
 
-    // Dispose the shared texture once
-    if (this.sharedTexture) {
-      this.sharedTexture.dispose()
-      this.sharedTexture = null
-    }
+    // Do not dispose sharedTexture; it's managed by the main application.
+    this.sharedTexture = null
   }
 }

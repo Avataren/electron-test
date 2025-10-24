@@ -10,11 +10,11 @@ export class RippleTransition extends BaseTransition {
     const { width, height } = this.planeConfig
     const geometry = new THREE.PlaneGeometry(width, height, 100, 100)
 
-    const texture = this.textures[fromIndex]?.clone() || null
-    if (!texture) return
+  const texture = this.textures[fromIndex]
+  if (!texture) return
 
-    texture.colorSpace = THREE.LinearSRGBColorSpace
-    texture.needsUpdate = true
+  texture.colorSpace = THREE.LinearSRGBColorSpace
+  texture.needsUpdate = true
 
     // Custom shader for ripple wave effect
     const material = new THREE.ShaderMaterial({
@@ -98,9 +98,7 @@ export class RippleTransition extends BaseTransition {
       this.planeMesh.geometry.dispose()
 
       const material = this.planeMesh.material as THREE.ShaderMaterial
-      if (material.uniforms.tDiffuse.value) {
-        material.uniforms.tDiffuse.value.dispose()
-      }
+      // Don't dispose the shared texture here. Just dispose the material.
       material.dispose()
 
       this.planeMesh = null

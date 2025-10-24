@@ -17,8 +17,8 @@ export class SliceTransition extends BaseTransition {
     const { width: planeWidth, height: planeHeight } = this.planeConfig
     const sliceHeight = planeHeight / this.numSlices
 
-    // Clone texture once for entire transition instead of 8 times
-    this.sharedTexture = this.textures[fromIndex]?.clone() || null
+    // Use existing texture reference to keep it in sync with the source
+    this.sharedTexture = this.textures[fromIndex] || null
     if (this.sharedTexture) {
       this.sharedTexture.colorSpace = THREE.LinearSRGBColorSpace
       this.sharedTexture.needsUpdate = true
@@ -70,16 +70,14 @@ export class SliceTransition extends BaseTransition {
       this.scene.remove(slice.mesh)
       slice.mesh.geometry.dispose()
       if (slice.mesh.material instanceof THREE.Material) {
-        // Don't dispose the shared texture here - we'll do it once below
+        // Dispose only the material/geometry. Do NOT dispose the shared
+        // texture because it's owned by the main textures array.
         slice.mesh.material.dispose()
       }
     })
     this.slices.length = 0
 
-    // Dispose the shared texture once
-    if (this.sharedTexture) {
-      this.sharedTexture.dispose()
-      this.sharedTexture = null
-    }
+    // Do not dispose sharedTexture; it's managed by the main application.
+    this.sharedTexture = null
   }
 }

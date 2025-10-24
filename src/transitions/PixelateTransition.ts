@@ -10,11 +10,13 @@ export class PixelateTransition extends BaseTransition {
     const { width, height } = this.planeConfig
     const geometry = new THREE.PlaneGeometry(width, height)
 
-    const texture = this.textures[fromIndex]?.clone() || null
-    if (!texture) return
+  const texture = this.textures[fromIndex]
+  if (!texture) return
 
-    texture.colorSpace = THREE.LinearSRGBColorSpace
-    texture.needsUpdate = true
+  // Use the shared texture reference from the main textures array so it
+  // stays up-to-date with resizes and new frames.
+  texture.colorSpace = THREE.LinearSRGBColorSpace
+  texture.needsUpdate = true
 
     // Custom shader for pixelate and dissolve effect
     const material = new THREE.ShaderMaterial({
@@ -89,9 +91,8 @@ export class PixelateTransition extends BaseTransition {
       this.planeMesh.geometry.dispose()
 
       const material = this.planeMesh.material as THREE.ShaderMaterial
-      if (material.uniforms.tDiffuse.value) {
-        material.uniforms.tDiffuse.value.dispose()
-      }
+      // Don't dispose the shared texture (material.uniforms.tDiffuse.value)
+      // since it's managed by the main application. Just dispose the material.
       material.dispose()
 
       this.planeMesh = null

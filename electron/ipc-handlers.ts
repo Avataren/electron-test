@@ -59,6 +59,10 @@ export class IPCHandlers {
       this.offscreenRenderer.resizeAll(width, height)
     })
 
+    ipcMain.handle('resize-active-offscreen-windows', (event, indices: number[], width: number, height: number) => {
+      this.offscreenRenderer.resizeIndices(indices, width, height)
+    })
+
     ipcMain.handle('enable-painting', (event, index: number) => {
       this.offscreenRenderer.enablePainting(index)
     })

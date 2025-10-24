@@ -22,6 +22,7 @@ describe('useWebviewFrames resize handling', () => {
                 imageSmoothingEnabled: true,
                 clearRect: () => {},
                 drawImage: () => {},
+                putImageData: () => {},
               }
             }
             return null
@@ -98,11 +99,20 @@ describe('useWebviewFrames resize handling', () => {
     const handler = (window as any).ipcRenderer.handlers.get('webview-frame')
     expect(handler).toBeDefined()
 
-    // Create a fake buffer (its contents aren't used because Image is mocked)
-    const fakeBuffer = new Uint8Array([1, 2, 3])
+    // Create a fake raw BGRA buffer matching 800x600
+    const width = 800
+    const height = 600
+    const raw = new Uint8Array(width * height * 4)
+    // fill with a simple pattern (opaque)
+    for (let i = 0; i < raw.length; i += 4) {
+      raw[i + 0] = 0 // B
+      raw[i + 1] = 128 // G
+      raw[i + 2] = 255 // R
+      raw[i + 3] = 255 // A
+    }
 
-    // Call the handler
-    handler(null, { index: 0, buffer: fakeBuffer, size: { width: 800, height: 600 } })
+    // Call the handler as a raw frame
+    handler(null, { index: 0, buffer: raw, size: { width, height }, format: 'raw' })
 
     // After handler runs, texture.image should be the canvas we created
     expect(callbackCalled).toBe(true)
