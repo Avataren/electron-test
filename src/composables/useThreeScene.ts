@@ -1,4 +1,4 @@
-import { ref, Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import * as THREE from 'three'
 import { calculatePlaneSize } from '../utils/geometry'
 

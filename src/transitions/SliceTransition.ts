@@ -1,7 +1,12 @@
 import * as THREE from 'three'
 import { BaseTransition } from './BaseTransition'
-import { Slice } from '../types'
-import { calculateUVCoordinates } from '../utils/geometry'
+
+// Inline type to avoid import issues
+interface Slice {
+  mesh: THREE.Mesh
+  velocity: THREE.Vector3
+  direction: number
+}
 
 export class SliceTransition extends BaseTransition {
   private slices: Slice[] = []
@@ -18,13 +23,13 @@ export class SliceTransition extends BaseTransition {
       const vStart = 1 - (i + 1) / this.numSlices
       const vEnd = 1 - i / this.numSlices
 
-      uvAttribute.setXY(0, 0, vEnd)
-      uvAttribute.setXY(1, 1, vEnd)
-      uvAttribute.setXY(2, 0, vStart)
-      uvAttribute.setXY(3, 1, vStart)
+      uvAttribute?.setXY(0, 0, vEnd)
+      uvAttribute?.setXY(1, 1, vEnd)
+      uvAttribute?.setXY(2, 0, vStart)
+      uvAttribute?.setXY(3, 1, vStart)
 
       const material = new THREE.MeshBasicMaterial({
-        map: this.textures[fromIndex].clone(),
+        map: this.textures[fromIndex]?.clone() || null,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 1,

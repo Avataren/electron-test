@@ -109,6 +109,7 @@ class ViewManager {
           contextIsolation: true
         }
       });
+      view.setBackgroundColor("#000000");
       this.setBounds(view, bounds);
       view.setAutoResize({ width: true, height: true });
       view.webContents.loadURL(url);

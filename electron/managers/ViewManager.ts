@@ -36,6 +36,9 @@ export class ViewManager {
         },
       })
 
+      // Set background color to match your app background
+      view.setBackgroundColor('#000000')
+
       this.setBounds(view, bounds)
       view.setAutoResize({ width: true, height: true })
       view.webContents.loadURL(url)
@@ -57,7 +60,7 @@ export class ViewManager {
       width: windowBounds.width,
       height: windowBounds.height - this.config.window.controlBarHeight,
     }
-    console.log('Setting view bounds:', bounds) // Add this
+    console.log('Setting view bounds:', bounds)
     view.setBounds(bounds)
   }
 
@@ -90,7 +93,7 @@ export class ViewManager {
     const view = this.views.get(index)
     if (view) {
       this.mainWindow.addBrowserView(view)
-      this.updateBounds() // Add this line
+      this.updateBounds()
     }
   }
 

@@ -1,7 +1,13 @@
 import * as THREE from 'three'
 import { BaseTransition } from './BaseTransition'
-import { Fragment } from '../types'
 import { calculateUVCoordinates, calculateFragmentPosition } from '../utils/geometry'
+
+// Inline type to avoid import issues
+interface Fragment {
+  mesh: THREE.Mesh
+  velocity: THREE.Vector3
+  rotationSpeed: THREE.Vector3
+}
 
 export class RainTransition extends BaseTransition {
   private fragments: Fragment[] = []
@@ -25,13 +31,13 @@ export class RainTransition extends BaseTransition {
           this.gridCols,
         )
 
-        uvAttribute.setXY(0, uStart, vEnd)
-        uvAttribute.setXY(1, uEnd, vEnd)
-        uvAttribute.setXY(2, uStart, vStart)
-        uvAttribute.setXY(3, uEnd, vStart)
+        uvAttribute?.setXY(0, uStart, vEnd)
+        uvAttribute?.setXY(1, uEnd, vEnd)
+        uvAttribute?.setXY(2, uStart, vStart)
+        uvAttribute?.setXY(3, uEnd, vStart)
 
         const material = new THREE.MeshBasicMaterial({
-          map: this.textures[fromIndex].clone(),
+          map: this.textures[fromIndex]?.clone() || null,
           side: THREE.DoubleSide,
           transparent: true,
           opacity: 1,

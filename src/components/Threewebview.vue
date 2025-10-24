@@ -249,7 +249,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   height: 120px;
-  background: red; /*/linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));*/
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));
   backdrop-filter: blur(10px);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 1000;

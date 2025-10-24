@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { PlaneConfig } from '../types'
+import type { PlaneConfig } from '../utils/geometry'
 
 export abstract class BaseTransition {
   protected scene: THREE.Scene

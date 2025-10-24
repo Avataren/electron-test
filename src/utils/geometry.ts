@@ -1,4 +1,14 @@
-import { PlaneConfig, CameraConfig } from '../types'
+// Inline types to avoid import issues
+export interface PlaneConfig {
+  width: number
+  height: number
+}
+
+export interface CameraConfig {
+  fov: number
+  distance: number
+  aspect: number
+}
 
 export const VIEWPORT_ASPECT = 16 / 9
 

@@ -2,7 +2,10 @@ import * as THREE from 'three'
 import { BaseTransition } from './BaseTransition'
 import { RainTransition } from './RainTransition'
 import { SliceTransition } from './SliceTransition'
-import { TransitionType, PlaneConfig } from '../types'
+import type { PlaneConfig } from '../utils/geometry'
+
+// Inline type to avoid import issues
+type TransitionType = 'rain' | 'slice'
 
 export class TransitionManager {
   private currentTransition: BaseTransition | null = null

@@ -1,6 +1,13 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { ref } from 'vue'
 import * as THREE from 'three'
-import { WebviewFrame } from '../types'
+
+// Inline type to avoid import issues
+interface WebviewFrame {
+  index: number
+  buffer: Uint8Array
+  size: { width: number; height: number }
+}
 
 export function useWebviewFrames(textures: THREE.Texture[]) {
   const urls = ref<string[]>([])
