@@ -220,15 +220,8 @@ class OffscreenRenderer {
       if (!this.paintingEnabled.has(index)) return;
       const bitmap = image.toBitmap();
       const size = image.getSize();
-      let sab = this.sharedBuffers.get(index);
-      if (!sab || sab.byteLength < bitmap.length) {
-        sab = new SharedArrayBuffer(bitmap.length);
-        this.sharedBuffers.set(index, sab);
-      }
-      const dest = new Uint8Array(sab);
-      dest.set(bitmap);
-        const buf = Buffer.from(dest.buffer);
-        this.windowManager.sendToRenderer("webview-frame", { index, buffer: buf, size, format: "raw" });
+      const buf = Buffer.from(bitmap);
+      this.windowManager.sendToRenderer("webview-frame", { index, buffer: buf, size, format: "raw" });
     });
   }
   setupLoadHandlers(window, index, url) {
