@@ -21,9 +21,12 @@ function createWindow() {
     height: 800,
     icon: path.join(process.env.VITE_PUBLIC || "", "favicon.ico"),
     webPreferences: {
-      preload: path.join(__dirname, "preload.mjs"),
+      preload: path.join(__dirname, "preload.js"),
+      // Changed from preload.mjs to preload.js
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      sandbox: true
+      // Explicitly enable sandbox for security
     }
   });
   win.webContents.on("did-finish-load", () => {

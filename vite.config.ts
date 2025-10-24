@@ -24,7 +24,7 @@ export default defineConfig({
         entry: 'electron/main.ts',
       },
       {
-        // Preload script - use ES module format
+        // Preload script - MUST use CommonJS format for sandbox compatibility
         entry: 'electron/preload.ts',
         onstart({ startup }) {
           startup()
@@ -34,8 +34,8 @@ export default defineConfig({
             outDir: 'dist-electron',
             rollupOptions: {
               output: {
-                format: 'es', // Use ES module format for preload
-                entryFileNames: '[name].mjs', // Output as .mjs
+                format: 'cjs', // Use CommonJS format for preload
+                entryFileNames: '[name].js', // Output as .js not .mjs
               },
             },
           },
