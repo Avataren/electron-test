@@ -9,23 +9,37 @@ interface WebviewFrame {
   size: { width: number; height: number }
 }
 
-export function useWebviewFrames(textures: THREE.Texture[]) {
+export function useWebviewFrames(
+  textures: THREE.Texture[],
+  onTextureUpdate?: (index: number) => void,
+) {
   const urls = ref<string[]>([])
 
   const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
     const { index, buffer } = data
 
-    if (!textures[index]) return
+    const texture = textures[index]
+    if (!texture) {
+      console.warn(`Texture at index ${index} is undefined`)
+      return
+    }
 
-    const blob = new Blob([buffer], { type: 'image/jpeg' })
+    // Convert buffer to proper Uint8Array type for Blob
+    const bufferArray = new Uint8Array(buffer)
+    const blob = new Blob([bufferArray], { type: 'image/jpeg' })
     const url = URL.createObjectURL(blob)
 
     const img = new Image()
     img.onload = () => {
       // Only update texture when we have valid image data
-      textures[index].image = img
-      textures[index].needsUpdate = true
+      texture.image = img
+      texture.needsUpdate = true
       URL.revokeObjectURL(url)
+
+      // Notify that texture was updated
+      if (onTextureUpdate) {
+        onTextureUpdate(index)
+      }
     }
     img.onerror = () => {
       console.error(`Failed to load image for texture ${index}`)

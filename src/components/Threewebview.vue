@@ -13,6 +13,7 @@ const store = useWebviewStore()
 const loadedTextures = ref<Set<number>>(new Set())
 const allTexturesLoaded = ref(false)
 const loadingProgress = ref(0)
+const textureUpdateTimestamps = ref<Map<number, number>>(new Map())
 
 const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
@@ -21,7 +22,13 @@ let transitionManager: TransitionManager | null = null
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
 
-const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(textures)
+const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
+  textures,
+  (index: number) => {
+    // Update timestamp when texture receives new frame
+    textureUpdateTimestamps.value.set(index, Date.now())
+  },
+)
 
 const showSetupView = async (index: number) => {
   store.setSetupIndex(index)
@@ -63,7 +70,6 @@ const createPlanes = () => {
     texture.minFilter = THREE.LinearFilter
     texture.magFilter = THREE.LinearFilter
     texture.colorSpace = THREE.LinearSRGBColorSpace
-    // Don't mark as needing update until we have image data
     textures.push(texture)
 
     const material = new THREE.MeshBasicMaterial({
@@ -76,7 +82,7 @@ const createPlanes = () => {
     plane.visible = index === 0
 
     planes.push(plane)
-    scene.value.add(plane)
+    scene.value?.add(plane)
   })
 
   transitionManager = new TransitionManager(scene.value, textures, planeConfig)
@@ -103,8 +109,11 @@ const animate = () => {
     const isComplete = transitionManager.update()
     if (isComplete) {
       store.setTransitioning(false)
-      // After transition, keep current and next window painting
-      const nextIdx = getNextIndex()
+      // After transition completes, update painting windows based on current state
+      const nextIdx = (store.currentIndex + 1) % urls.value.length
+      console.log(
+        `Transition complete. Current: ${store.currentIndex}, keeping painting for: ${store.currentIndex}, ${nextIdx}`,
+      )
       updateActivePaintingWindows([store.currentIndex, nextIdx])
     }
   }
@@ -119,44 +128,114 @@ const updateActivePaintingWindows = async (indices: number[]) => {
   await window.ipcRenderer.invoke('set-active-painting-windows', indices)
 }
 
-const getNextIndex = () => {
-  return (store.currentIndex + 1) % urls.value.length
-}
-
 const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
-  if (store.isTransitioning || targetIndex === store.currentIndex) return
+  // Guard against multiple transitions and transitioning to current page
+  if (store.isTransitioning || targetIndex === store.currentIndex) {
+    console.log(
+      `Skipping transition to ${targetIndex}: isTransitioning=${store.isTransitioning}, current=${store.currentIndex}`,
+    )
+    return
+  }
+
+  // Guard against invalid indices
+  if (
+    targetIndex < 0 ||
+    targetIndex >= urls.value.length ||
+    !planes[targetIndex] ||
+    !planes[store.currentIndex]
+  ) {
+    console.error(
+      `Invalid transition indices: target=${targetIndex}, current=${store.currentIndex}`,
+    )
+    return
+  }
+
+  console.log(`Starting transition from ${store.currentIndex} to ${targetIndex}`)
 
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
 
-  // Enable painting for current, target, and next (after target)
+  // Update currentIndex IMMEDIATELY to prevent race conditions with timer
+  store.setCurrentIndex(targetIndex)
+
+  // Enable painting for: from (for transition), target (to transition to), and next (to preload)
   const nextAfterTarget = (targetIndex + 1) % urls.value.length
   await updateActivePaintingWindows([fromIndex, targetIndex, nextAfterTarget])
 
-  // Wait a bit to ensure target window has painted a frame (at 2fps, 1 sec = 2 frames)
-  await new Promise((resolve) => setTimeout(resolve, 1000))
+  // Wait and verify that target texture has received fresh frames
+  const maxWaitTime = 5000 // 5 seconds max
+  const startWait = Date.now()
+  const targetEnableTime = Date.now()
+  let textureReady = false
 
-  planes[targetIndex].visible = true
+  while (Date.now() - startWait < maxWaitTime && !textureReady) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
 
-  if (transitionManager) {
-    transitionManager.startTransition(type, fromIndex, planes[fromIndex].position)
+    // Check if texture has valid image data AND has been updated since we enabled painting
+    const targetTexture = textures[targetIndex]
+    const lastUpdate = textureUpdateTimestamps.value.get(targetIndex) || 0
+    const hasRecentUpdate = lastUpdate > targetEnableTime
+
+    if (targetTexture && targetTexture.image && targetTexture.image.width > 0 && hasRecentUpdate) {
+      const timeSinceUpdate = Date.now() - lastUpdate
+      console.log(
+        `Texture ${targetIndex} ready with dimensions: ${targetTexture.image.width}x${targetTexture.image.height}, updated ${timeSinceUpdate}ms ago`,
+      )
+      textureReady = true
+    } else if (!hasRecentUpdate) {
+      console.log(
+        `Waiting for texture ${targetIndex} to receive fresh frames (last update: ${lastUpdate > 0 ? Date.now() - lastUpdate + 'ms ago' : 'never'})`,
+      )
+    }
   }
 
-  planes[fromIndex].visible = false
-  store.setCurrentIndex(targetIndex)
+  if (!textureReady) {
+    console.warn(`Texture ${targetIndex} not ready after ${maxWaitTime}ms, proceeding anyway`)
+  }
+
+  // Make target plane visible
+  const targetPlane = planes[targetIndex]
+  const fromPlane = planes[fromIndex]
+
+  if (!targetPlane || !fromPlane) {
+    console.error('Planes not available for transition')
+    store.setTransitioning(false)
+    return
+  }
+
+  targetPlane.visible = true
+
+  // Start the visual transition effect
+  if (transitionManager) {
+    transitionManager.startTransition(type, fromIndex, fromPlane.position)
+  }
+
+  // Hide the old plane
+  fromPlane.visible = false
 }
 
 const rotateWebview = () => {
-  if (!allTexturesLoaded.value) return // Don't rotate until all textures are loaded
+  if (!allTexturesLoaded.value) {
+    console.log('Skipping rotation: textures not loaded')
+    return
+  }
+
+  if (store.isTransitioning) {
+    console.log('Skipping rotation: transition in progress')
+    return
+  }
 
   const nextIndex = (store.currentIndex + 1) % urls.value.length
   const nextType = transitionManager?.getNextType() || 'rain'
+
+  console.log(`Rotate: current=${store.currentIndex}, next=${nextIndex}, type=${nextType}`)
 
   transition(nextIndex, nextType)
   store.toggleTransitionType()
 }
 
 const refreshWebviews = async () => {
+  console.log('Refreshing all webviews')
   for (let i = 0; i < urls.value.length; i++) {
     await window.ipcRenderer.invoke('reload-webview', i)
   }
@@ -168,6 +247,13 @@ const checkAllTexturesLoaded = () => {
     console.log('All textures loaded, starting slideshow')
     // Keep current (0) and next (1) window painting
     updateActivePaintingWindows([0, 1])
+
+    // Wait 3 seconds after loading to ensure windows have painted multiple frames
+    // At 2fps, this gives us 6 frames per window to build up texture data
+    setTimeout(() => {
+      console.log('Starting rotation timer after texture warmup period')
+      startTimers()
+    }, 3000)
   }
   loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
 }
@@ -181,7 +267,6 @@ const handleSetupComplete = async () => {
 
 const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) => {
   console.log(`Webview ${data.index} page loaded: ${data.url}`)
-  // Don't mark as loaded yet - wait for first frame
 }
 
 const handleWebviewFrame = (_event: any, data: any) => {
@@ -197,7 +282,12 @@ const handleWebviewFrame = (_event: any, data: any) => {
 const { startTimers, stopTimers } = useRotationTimer(rotateWebview, refreshWebviews)
 
 const handleDotClick = (index: number) => {
-  if (!allTexturesLoaded.value) return // Don't allow transitions until loaded
+  if (!allTexturesLoaded.value) return
+
+  if (store.isTransitioning) {
+    console.log('Skipping dot click: transition in progress')
+    return
+  }
 
   const nextType = transitionManager?.getNextType() || 'rain'
   transition(index, nextType)
@@ -210,7 +300,6 @@ onMounted(async () => {
   createPlanes()
   animate()
 
-  // Set up custom frame listener first
   window.ipcRenderer.on('webview-frame', handleWebviewFrame)
   window.ipcRenderer.on('webview-loaded', handleWebviewLoaded)
   setupListeners()
@@ -218,23 +307,7 @@ onMounted(async () => {
   window.addEventListener('resize', handleResize)
   window.ipcRenderer.on('setup-complete', async () => {
     await handleSetupComplete()
-    // Wait for all textures to load before starting timers
-    const checkInterval = setInterval(() => {
-      if (allTexturesLoaded.value) {
-        clearInterval(checkInterval)
-        startTimers()
-      }
-    }, 100)
-
-    // Timeout after 10 seconds
-    setTimeout(() => {
-      clearInterval(checkInterval)
-      if (!allTexturesLoaded.value) {
-        console.warn('Timeout waiting for textures, starting anyway')
-        allTexturesLoaded.value = true
-        startTimers()
-      }
-    }, 10000)
+    // Texture loading and timer starting now handled by checkAllTexturesLoaded()
   })
 })
 
