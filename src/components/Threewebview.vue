@@ -122,7 +122,7 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
 const rotateWebview = () => {
   const nextIndex = (store.currentIndex + 1) % urls.value.length
   const nextType = transitionManager?.getNextType() || 'rain'
-  
+
   transition(nextIndex, nextType)
   store.toggleTransitionType()
 }
@@ -179,7 +179,7 @@ onUnmounted(() => {
 
 <template>
   <div class="webview-3d-container">
-    <div v-if="store.setupMode" class="setup-control-bar">
+    <div v-if="store.setupMode && urls.length > 0" class="setup-control-bar">
       <div class="setup-content">
         <div class="setup-info">
           <h2>Setup Mode</h2>

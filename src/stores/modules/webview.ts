@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { TransitionType } from '../types'
+import { TransitionType } from '../../types'
 
 export const useWebviewStore = defineStore('webview', () => {
   const currentIndex = ref(0)
