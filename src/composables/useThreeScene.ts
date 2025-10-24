@@ -6,9 +6,9 @@ const FOV = 75
 const DISTANCE = 5
 
 export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
-  const scene = shallowRef<THREE.Scene | null>(null) // Change ref to shallowRef
-  const camera = shallowRef<THREE.PerspectiveCamera | null>(null) // Change ref to shallowRef
-  const renderer = shallowRef<THREE.WebGLRenderer | null>(null) // Change ref to shallowRef
+  const scene = shallowRef<THREE.Scene | null>(null)
+  const camera = shallowRef<THREE.PerspectiveCamera | null>(null)
+  const renderer = shallowRef<THREE.WebGLRenderer | null>(null)
 
   const initScene = () => {
     if (!canvasRef.value) return

@@ -103,8 +103,9 @@ const animate = () => {
     const isComplete = transitionManager.update()
     if (isComplete) {
       store.setTransitioning(false)
-      // After transition, only paint the current window
-      updateActivePaintingWindows([store.currentIndex])
+      // After transition, keep current and next window painting
+      const nextIdx = getNextIndex()
+      updateActivePaintingWindows([store.currentIndex, nextIdx])
     }
   }
 
@@ -114,7 +115,12 @@ const animate = () => {
 }
 
 const updateActivePaintingWindows = async (indices: number[]) => {
+  console.log(`Setting active painting windows: ${indices.join(', ')}`)
   await window.ipcRenderer.invoke('set-active-painting-windows', indices)
+}
+
+const getNextIndex = () => {
+  return (store.currentIndex + 1) % urls.value.length
 }
 
 const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
@@ -123,8 +129,12 @@ const transition = async (targetIndex: number, type: 'rain' | 'slice') => {
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
 
-  // Enable painting for both current and target windows during transition
-  await updateActivePaintingWindows([fromIndex, targetIndex])
+  // Enable painting for current, target, and next (after target)
+  const nextAfterTarget = (targetIndex + 1) % urls.value.length
+  await updateActivePaintingWindows([fromIndex, targetIndex, nextAfterTarget])
+
+  // Wait a bit to ensure target window has painted a frame (at 2fps, 1 sec = 2 frames)
+  await new Promise((resolve) => setTimeout(resolve, 1000))
 
   planes[targetIndex].visible = true
 
@@ -156,8 +166,8 @@ const checkAllTexturesLoaded = () => {
   if (loadedTextures.value.size === urls.value.length && !allTexturesLoaded.value) {
     allTexturesLoaded.value = true
     console.log('All textures loaded, starting slideshow')
-    // Now only enable painting for the first window
-    updateActivePaintingWindows([0])
+    // Keep current (0) and next (1) window painting
+    updateActivePaintingWindows([0, 1])
   }
   loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
 }
@@ -170,16 +180,15 @@ const handleSetupComplete = async () => {
 }
 
 const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) => {
-  console.log(`Webview ${data.index} loaded: ${data.url}`)
-  if (!store.setupMode) {
-    loadedTextures.value.add(data.index)
-    checkAllTexturesLoaded()
-  }
+  console.log(`Webview ${data.index} page loaded: ${data.url}`)
+  // Don't mark as loaded yet - wait for first frame
 }
 
 const handleWebviewFrame = (_event: any, data: any) => {
   const { index } = data
+  // Only mark as loaded when we receive the FIRST frame
   if (!store.setupMode && !loadedTextures.value.has(index)) {
+    console.log(`Texture ${index} received first frame`)
     loadedTextures.value.add(index)
     checkAllTexturesLoaded()
   }
