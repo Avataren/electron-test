@@ -48,7 +48,6 @@ class WindowManager {
         sandbox: true
       }
     });
-    this.window.webContents.openDevTools({ mode: "detach" });
     this.window.webContents.on("did-finish-load", () => {
       this.sendToRenderer("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
     });
@@ -64,8 +63,10 @@ class WindowManager {
       console.warn("[WindowManager] failed to enable COOP/COEP headers", err);
     }
     if (this.viteDevServerUrl) {
+      this.window.webContents.once("did-frame-finish-load", () => {
+        this.window?.webContents.openDevTools();
+      });
       this.window.loadURL(this.viteDevServerUrl);
-      this.window.webContents.openDevTools();
     } else {
       this.window.loadFile(path.join(this.rendererDist, "index.html"));
     }
@@ -113,17 +114,66 @@ class ViewManager {
   views = /* @__PURE__ */ new Map();
   config;
   mainWindow = null;
+  isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+  devToolsListeners = [];
+  devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 };
   constructor(config) {
     this.config = config;
   }
   setMainWindow(window) {
     this.mainWindow = window;
     this.setupResizeHandler();
+    this.setupDevToolsHandlers();
   }
   setupResizeHandler() {
     if (!this.mainWindow) return;
     this.mainWindow.on("resize", () => {
       this.updateBounds();
+    });
+  }
+  setupDevToolsHandlers() {
+    if (!this.mainWindow) return;
+    const update = () => {
+      this.updateBounds();
+    };
+    const webContents = this.mainWindow.webContents;
+    const handleOpened = () => {
+      this.clearDevToolsListeners();
+      this.updateDevToolsInsets();
+      update();
+      const devToolsContents = webContents.devToolsWebContents;
+      if (devToolsContents) {
+        const handleDevToolsResize = () => {
+          this.updateDevToolsInsets();
+          this.updateBounds();
+        };
+        const handlePreferredSizeChanged = (_event, _size) => {
+          this.updateDevToolsInsets();
+          this.updateBounds();
+        };
+        devToolsContents.on("destroyed", handleDevToolsResize);
+        devToolsContents.on("did-finish-load", handleDevToolsResize);
+        devToolsContents.on("did-stop-loading", handleDevToolsResize);
+        devToolsContents.on("dom-ready", handleDevToolsResize);
+        devToolsContents.on("preferred-size-changed", handlePreferredSizeChanged);
+        this.devToolsListeners.push(() => {
+          devToolsContents.removeListener("destroyed", handleDevToolsResize);
+          devToolsContents.removeListener("did-finish-load", handleDevToolsResize);
+          devToolsContents.removeListener("did-stop-loading", handleDevToolsResize);
+          devToolsContents.removeListener("dom-ready", handleDevToolsResize);
+          devToolsContents.removeListener("preferred-size-changed", handlePreferredSizeChanged);
+        });
+      }
+    };
+    webContents.on("devtools-opened", handleOpened);
+    webContents.on("devtools-focused", () => {
+      this.updateDevToolsInsets();
+      update();
+    });
+    webContents.on("devtools-closed", () => {
+      this.clearDevToolsListeners();
+      this.resetDevToolsInsets();
+      update();
     });
   }
   createViews(urls) {
@@ -137,6 +187,11 @@ class ViewManager {
         }
       });
       view.setBackgroundColor("#000000");
+      if (index === 0 && this.mainWindow && this.isDev) {
+        view.webContents.once("did-finish-load", () => {
+          view.webContents.openDevTools();
+        });
+      }
       this.setBounds(view, bounds);
       view.setAutoResize({ width: true, height: true });
       view.webContents.loadURL(url);
@@ -148,14 +203,24 @@ class ViewManager {
     });
   }
   setBounds(view, windowBounds) {
-    const bounds = {
-      x: 0,
-      y: 0,
-      width: windowBounds.width,
-      height: windowBounds.height - this.config.window.controlBarHeight
-    };
-    console.log("Setting view bounds:", bounds);
+    const bounds = this.calculateViewBounds(windowBounds);
     view.setBounds(bounds);
+  }
+  calculateViewBounds(windowBounds) {
+    const availableWidth = Math.max(
+      0,
+      windowBounds.width - this.devToolsInsets.left - this.devToolsInsets.right
+    );
+    const availableHeight = Math.max(
+      0,
+      windowBounds.height - this.devToolsInsets.top - this.devToolsInsets.bottom - this.config.window.controlBarHeight
+    );
+    return {
+      x: this.devToolsInsets.left,
+      y: this.devToolsInsets.top,
+      width: availableWidth,
+      height: availableHeight
+    };
   }
   setupViewEventHandlers(view, index, url) {
     view.webContents.on("did-finish-load", () => {
@@ -167,6 +232,7 @@ class ViewManager {
   }
   updateBounds() {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    this.updateDevToolsInsets();
     const bounds = this.mainWindow.getContentBounds();
     this.views.forEach((view) => {
       this.setBounds(view, bounds);
@@ -181,9 +247,17 @@ class ViewManager {
     if (view) {
       this.mainWindow.addBrowserView(view);
       this.updateBounds();
+      if (this.isDev) {
+        if (view.webContents.isDevToolsOpened()) {
+          view.webContents.devToolsWebContents?.focus?.();
+        } else {
+          view.webContents.openDevTools();
+        }
+      }
     }
   }
   cleanup() {
+    this.clearDevToolsListeners();
     this.views.forEach((view) => {
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.removeBrowserView(view);
@@ -194,6 +268,77 @@ class ViewManager {
   }
   getViews() {
     return this.views;
+  }
+  clearDevToolsListeners() {
+    this.devToolsListeners.forEach((remove) => remove());
+    this.devToolsListeners.length = 0;
+    this.resetDevToolsInsets();
+  }
+  resetDevToolsInsets() {
+    this.devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+  }
+  updateDevToolsInsets() {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      this.resetDevToolsInsets();
+      return;
+    }
+    const webContents = this.mainWindow.webContents;
+    if (!webContents.isDevToolsOpened?.()) {
+      this.resetDevToolsInsets();
+      return;
+    }
+    const devToolsContents = webContents.devToolsWebContents;
+    if (!devToolsContents) {
+      this.resetDevToolsInsets();
+      return;
+    }
+    const ownerWindow = devToolsContents.getOwnerBrowserWindow?.();
+    if (!ownerWindow) {
+      this.resetDevToolsInsets();
+      return;
+    }
+    const windowBounds = this.mainWindow.getBounds();
+    const devToolsBounds = ownerWindow.getBounds();
+    const tolerance = 2;
+    const matchesWidth = Math.abs(devToolsBounds.width - windowBounds.width) <= tolerance;
+    const matchesHeight = Math.abs(devToolsBounds.height - windowBounds.height) <= tolerance;
+    const insets = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (matchesWidth && devToolsBounds.height < windowBounds.height) {
+      const distanceTop = Math.abs(devToolsBounds.y - windowBounds.y);
+      const distanceBottom = Math.abs(
+        windowBounds.y + windowBounds.height - (devToolsBounds.y + devToolsBounds.height)
+      );
+      if (distanceBottom <= distanceTop) {
+        insets.bottom = devToolsBounds.height;
+      } else {
+        insets.top = devToolsBounds.height;
+      }
+    } else if (matchesHeight && devToolsBounds.width < windowBounds.width) {
+      const distanceLeft = Math.abs(devToolsBounds.x - windowBounds.x);
+      const distanceRight = Math.abs(
+        windowBounds.x + windowBounds.width - (devToolsBounds.x + devToolsBounds.width)
+      );
+      if (distanceRight <= distanceLeft) {
+        insets.right = devToolsBounds.width;
+      } else {
+        insets.left = devToolsBounds.width;
+      }
+    } else {
+      const preferredSize = devToolsContents.getPreferredSize?.();
+      if (preferredSize) {
+        if (preferredSize.height && preferredSize.height < windowBounds.height) {
+          insets.bottom = preferredSize.height;
+        } else if (preferredSize.width && preferredSize.width < windowBounds.width) {
+          insets.right = preferredSize.width;
+        }
+      }
+    }
+    this.devToolsInsets = {
+      top: Math.max(0, insets.top),
+      right: Math.max(0, insets.right),
+      bottom: Math.max(0, insets.bottom),
+      left: Math.max(0, insets.left)
+    };
   }
 }
 class OffscreenRenderer {

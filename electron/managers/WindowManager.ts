@@ -33,7 +33,6 @@ export class WindowManager {
         sandbox: true,
       },
     })
-    this.window.webContents.openDevTools({ mode: 'detach' })
     this.window.webContents.on('did-finish-load', () => {
       this.sendToRenderer('main-process-message', new Date().toLocaleString())
     })
@@ -55,8 +54,10 @@ export class WindowManager {
     }
 
     if (this.viteDevServerUrl) {
+      this.window.webContents.once('did-frame-finish-load', () => {
+        this.window?.webContents.openDevTools()
+      })
       this.window.loadURL(this.viteDevServerUrl)
-      this.window.webContents.openDevTools()
     } else {
       this.window.loadFile(path.join(this.rendererDist, 'index.html'))
     }
