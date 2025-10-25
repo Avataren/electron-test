@@ -5,7 +5,7 @@ import * as THREE from 'three'
 // Inline type to avoid import issues
 interface WebviewFrame {
   index: number
-  buffer: Uint8Array
+  buffer: ArrayBuffer | SharedArrayBuffer | Uint8Array
   size: { width: number; height: number }
 }
 
@@ -24,9 +24,109 @@ export function useWebviewFrames(
 ) {
   const urls = ref<string[]>([])
   const _win: any = window
+  type IncomingFrame = WebviewFrame & { format?: string }
 
-  const handleWebviewFrame = (_event: any, data: WebviewFrame & { format?: string }) => {
+  const pendingFrames = new Map<number, IncomingFrame>()
+  const pendingFrameRafs = new Map<number, number>()
+  const frameStatsLogged = new Set<number>()
+
+  const cloneToUint8Array = (buffer: ArrayBuffer | SharedArrayBuffer | Uint8Array) => {
+    if (buffer instanceof Uint8Array) {
+      return buffer.slice()
+    }
+    if (buffer instanceof ArrayBuffer) {
+      return new Uint8Array(buffer.slice(0))
+    }
+    // SharedArrayBuffer does not implement slice()
+    const view = new Uint8Array(buffer)
+    const copy = new Uint8Array(view.length)
+    copy.set(view)
+    return copy
+  }
+
+  const logFrameStats = (
+    index: number,
+    srcArr: Uint8Array,
+    reportedWidth: number,
+    reportedHeight: number,
+    format?: string,
+  ) => {
+    if (frameStatsLogged.has(index)) return
+    frameStatsLogged.add(index)
+
+    let min = 255
+    let max = 0
+    let sampleSum = 0
+    let sampleCount = 0
+    const stride = Math.max(1, Math.floor(srcArr.length / 4096))
+
+    for (let i = 0; i < srcArr.length; i += stride) {
+      const val = srcArr[i]
+      if (val < min) min = val
+      if (val > max) max = val
+      sampleSum += val
+      sampleCount++
+    }
+
+    const avg = sampleCount > 0 ? Math.round(sampleSum / sampleCount) : 0
+    const firstBytes = Array.from(srcArr.slice(0, 32))
+
+    console.log(`[useWebviewFrames] 🔍 Frame stats for ${index}`, {
+      format,
+      length: srcArr.length,
+      reportedWidth,
+      reportedHeight,
+      min,
+      max,
+      avg,
+      firstBytes,
+    })
+
+    try {
+      _win.ipcRenderer?.send('frame-stats', {
+        index,
+        format,
+        length: srcArr.length,
+        reportedWidth,
+        reportedHeight,
+        min,
+        max,
+        avg,
+        firstBytes,
+      })
+    } catch (err) {
+      console.debug('[useWebviewFrames] failed to send frame-stats to main process', err)
+    }
+  }
+
+  const flushPendingFrame = (index: number) => {
+    const frame = pendingFrames.get(index)
+    if (!frame) return
+    if (applyFrameToTexture(frame)) {
+      pendingFrames.delete(index)
+      pendingFrameRafs.delete(index)
+    } else {
+      schedulePendingFrame(index)
+    }
+  }
+
+  const schedulePendingFrame = (index: number) => {
+    const existing = pendingFrameRafs.get(index)
+    if (typeof existing === 'number') {
+      cancelAnimationFrame(existing)
+    }
+    const raf = window.requestAnimationFrame(() => flushPendingFrame(index))
+    pendingFrameRafs.set(index, raf)
+  }
+
+  const applyFrameToTexture = (data: IncomingFrame): boolean => {
     const { index, buffer, size, format } = data as any
+
+    const texture = textures[index]
+    if (!texture) {
+      console.warn(`[useWebviewFrames] ⚠️ Texture ${index} not ready; queuing incoming frame`)
+      return false
+    }
 
     // ENHANCED DEBUG: Show incoming IPC payload shape
     try {
@@ -39,12 +139,6 @@ export function useWebviewFrames(
       })
     } catch (err) {
       console.error('[useWebviewFrames] Failed to inspect buffer:', err)
-    }
-
-    const texture = textures[index]
-    if (!texture) {
-      console.error(`❌ Texture at index ${index} is undefined`)
-      return
     }
 
     // Helper function to get maximum texture size
@@ -89,6 +183,8 @@ export function useWebviewFrames(
 
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
 
+        logFrameStats(index, srcArr, reportedWidth, reportedHeight, format)
+
         const reportedBytes = reportedWidth * reportedHeight * 4
         const dprWidth = Math.max(1, Math.round(reportedWidth * dpr))
         const dprHeight = Math.max(1, Math.round(reportedHeight * dpr))
@@ -128,7 +224,7 @@ export function useWebviewFrames(
             } catch (err) {
               console.debug('[useWebviewFrames] failed to send frame-rejected ipc', err)
             }
-            return
+            return true
           }
         }
 
@@ -143,7 +239,7 @@ export function useWebviewFrames(
 
         if (!ctx) {
           console.error('❌ 2D context not available for canvas')
-          return
+          return true
         }
 
         const pixelCount = pageWidth * pageHeight
@@ -194,6 +290,38 @@ export function useWebviewFrames(
         texture.image = canvas as any
         console.log(`[useWebviewFrames] ✅ Assigned canvas to texture ${index}`)
 
+        try {
+          if (_win.__debugFrames) {
+            const existing = document.getElementById(`debug-frame-${index}`)
+            const preview = document.createElement('canvas')
+            const maxPreviewWidth = 320
+            const previewWidth = Math.min(maxPreviewWidth, pageWidth)
+            const aspect = pageWidth > 0 && pageHeight > 0 ? pageWidth / pageHeight : 1
+            const previewHeight = Math.max(1, Math.round(previewWidth / aspect))
+            preview.width = previewWidth
+            preview.height = previewHeight
+            const previewCtx = preview.getContext('2d')
+            if (previewCtx) {
+              previewCtx.imageSmoothingEnabled = false
+              previewCtx.clearRect(0, 0, previewWidth, previewHeight)
+              previewCtx.drawImage(canvas, 0, 0, previewWidth, previewHeight)
+            }
+            preview.id = `debug-frame-${index}`
+            preview.style.position = 'fixed'
+            preview.style.width = `${previewWidth}px`
+            preview.style.height = `${previewHeight}px`
+            preview.style.right = '20px'
+            preview.style.bottom = `${20 + index * (previewHeight + 12)}px`
+            preview.style.zIndex = '9999'
+            preview.style.border = '1px solid rgba(255,255,255,0.3)'
+            preview.style.background = '#000'
+            if (existing) existing.remove()
+            document.body.appendChild(preview)
+          }
+        } catch (err) {
+          console.debug('[useWebviewFrames] failed to append debug canvas', err)
+        }
+
         // Ensure dimensions are correct
         if (texture.source?.data) {
           texture.source.data.width = canvas.width
@@ -216,6 +344,19 @@ export function useWebviewFrames(
           })
           onTextureUpdate(index, { width: cssWidth, height: cssHeight, backingWidth: pageWidth, backingHeight: pageHeight })
 
+        try {
+          _win.ipcRenderer?.send('texture-applied', {
+            index,
+            format,
+            width: cssWidth,
+              height: cssHeight,
+              backingWidth: pageWidth,
+              backingHeight: pageHeight,
+            })
+          } catch (err) {
+            console.debug('[useWebviewFrames] failed to send texture-applied event', err)
+          }
+
           // Send initial-frame ACK
           try {
             if (!_win.__initialAckSent) _win.__initialAckSent = new Set<number>()
@@ -230,9 +371,10 @@ export function useWebviewFrames(
         }
       } catch (err) {
         console.error(`[useWebviewFrames] ❌ Error processing raw frame for ${index}:`, err)
+        return true
       }
 
-      return
+      return true
     }
 
     // Fallback: treat buffer as an encoded image (jpeg/png)
@@ -301,6 +443,51 @@ export function useWebviewFrames(
         if (onTextureUpdate) {
           onTextureUpdate(index, { width: pageWidth, height: pageHeight, backingWidth: pageWidth, backingHeight: pageHeight })
         }
+
+        try {
+          if (_win.__debugFrames) {
+            const existing = document.getElementById(`debug-frame-${index}`)
+            const preview = document.createElement('canvas')
+            const maxPreviewWidth = 320
+            const aspect = pageWidth > 0 && pageHeight > 0 ? pageWidth / pageHeight : 1
+            const previewWidth = Math.min(maxPreviewWidth, pageWidth)
+            const previewHeight = Math.max(1, Math.round(previewWidth / aspect))
+            preview.width = previewWidth
+            preview.height = previewHeight
+            const previewCtx = preview.getContext('2d')
+            if (previewCtx && texture.image instanceof HTMLCanvasElement) {
+              previewCtx.imageSmoothingEnabled = false
+              previewCtx.clearRect(0, 0, previewWidth, previewHeight)
+              previewCtx.drawImage(texture.image, 0, 0, previewWidth, previewHeight)
+            }
+            preview.id = `debug-frame-${index}`
+            preview.style.position = 'fixed'
+            preview.style.width = `${previewWidth}px`
+            preview.style.height = `${previewHeight}px`
+            preview.style.right = '20px'
+            preview.style.bottom = `${20 + index * (previewHeight + 12)}px`
+            preview.style.zIndex = '9999'
+            preview.style.border = '1px solid rgba(255,255,255,0.3)'
+            preview.style.background = '#000'
+            if (existing) existing.remove()
+            document.body.appendChild(preview)
+          }
+        } catch (err) {
+          console.debug('[useWebviewFrames] failed to append debug canvas (encoded path)', err)
+        }
+
+        try {
+          _win.ipcRenderer?.send('texture-applied', {
+            index,
+            format: 'jpeg',
+            width: pageWidth,
+            height: pageHeight,
+            backingWidth: pageWidth,
+            backingHeight: pageHeight,
+          })
+        } catch (err) {
+          console.debug('[useWebviewFrames] failed to send texture-applied event (encoded path)', err)
+        }
       } catch (err) {
         console.error('Error updating texture from webview frame', err)
         URL.revokeObjectURL(url)
@@ -311,6 +498,26 @@ export function useWebviewFrames(
       URL.revokeObjectURL(url)
     }
     img.src = url
+    return true
+  }
+
+  const handleWebviewFrame = (_event: any, data: IncomingFrame) => {
+    if (applyFrameToTexture(data)) {
+      return
+    }
+
+    try {
+      const clonedSize = data.size ? { ...data.size } : undefined
+      const clonedFrame: IncomingFrame = {
+        ...data,
+        size: clonedSize,
+        buffer: cloneToUint8Array(data.buffer),
+      }
+      pendingFrames.set(data.index, clonedFrame)
+      schedulePendingFrame(data.index)
+    } catch (err) {
+      console.error('[useWebviewFrames] Failed to queue pending frame', err)
+    }
   }
 
   const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) => {

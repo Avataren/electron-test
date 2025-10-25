@@ -501,13 +501,13 @@ class OffscreenRenderer {
   enablePainting(index) {
     const window = this.windows.get(index);
     if (window && !window.isDestroyed() && !this.paintingEnabled.has(index)) {
+      this.paintingEnabled.add(index);
       try {
         window.webContents.setFrameRate(this.config.rendering.frameRate);
       } catch (err) {
         console.warn("[OffscreenRenderer] setFrameRate failed on enable", { index, err });
       }
       setTimeout(() => {
-        this.paintingEnabled.add(index);
         console.log(`Enabled painting for window ${index}`);
       }, 60);
     }
@@ -650,6 +650,20 @@ class IPCHandlers {
         console.warn("[IPC] failed to log texture-applied", err);
       }
     });
+    ipcMain.on("frame-stats", (event, data) => {
+      try {
+        console.log("[IPC] frame-stats", data);
+      } catch (err) {
+        console.warn("[IPC] failed to log frame-stats", err);
+      }
+    });
+    ipcMain.on("plane-state", (event, data) => {
+      try {
+        console.log("[IPC] plane-state", data);
+      } catch (err) {
+        console.warn("[IPC] failed to log plane-state", err);
+      }
+    });
   }
   unregister() {
     ipcMain.removeHandler("get-webview-urls");
@@ -661,6 +675,9 @@ class IPCHandlers {
     ipcMain.removeHandler("enable-painting");
     ipcMain.removeHandler("disable-painting");
     ipcMain.removeAllListeners("initial-frame-ack");
+    ipcMain.removeAllListeners("texture-applied");
+    ipcMain.removeAllListeners("frame-stats");
+    ipcMain.removeAllListeners("plane-state");
   }
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

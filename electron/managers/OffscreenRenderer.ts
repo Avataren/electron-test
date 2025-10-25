@@ -210,20 +210,22 @@ export class OffscreenRenderer {
   enablePainting(index: number): void {
     const window = this.windows.get(index)
     if (window && !window.isDestroyed() && !this.paintingEnabled.has(index)) {
-      // Set the frame rate first, then mark painting enabled after a short
-      // delay to avoid races where a paint event fires before the caller is
-      // ready to handle incoming frames. This reduces the chance of
-      // processing an intermediate-sized frame that can cause GL copy
-      // overflow errors.
+      // Ensure the renderer sees the very first paint event by marking this
+      // window as painting-enabled immediately. Any paint event that fires
+      // while setFrameRate is being applied will now be captured and queued
+      // by the paint handler instead of being dropped outright.
+      this.paintingEnabled.add(index)
+
       try {
         window.webContents.setFrameRate(this.config.rendering.frameRate)
       } catch (err) {
         console.warn('[OffscreenRenderer] setFrameRate failed on enable', { index, err })
       }
 
-      // Mark painting enabled slightly after setting the frame rate.
+      // We still keep a short delay before logging so that downstream
+      // observers have a moment to prepare, but the window is already marked
+      // as painting-enabled to avoid skipping the initial frame.
       setTimeout(() => {
-        this.paintingEnabled.add(index)
         console.log(`Enabled painting for window ${index}`)
       }, 60)
     }

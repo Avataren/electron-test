@@ -21,6 +21,7 @@ const isInitialLoading = ref(true) // NEW: Track if we're in initial loading pha
 const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
 let transitionManager: TransitionManager | null = null
+const win: any = window
 
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
@@ -32,6 +33,31 @@ const pageAspect = ref<number | null>(null)
   async (index: number, size?: { width: number; height: number; backingWidth?: number; backingHeight?: number }) => {
     // Update timestamp when texture receives new frame
     textureUpdateTimestamps.value.set(index, Date.now())
+
+    const texture = textures[index]
+    const plane = planes[index]
+    if (plane && texture && plane.material instanceof THREE.MeshBasicMaterial) {
+      if (plane.material.map !== texture) {
+        plane.material.map = texture
+        plane.material.needsUpdate = true
+        console.log(`[Threewebview] Bound texture ${index} to plane material`)
+        try {
+          win.ipcRenderer?.send('plane-state', {
+            index,
+            mapAssigned: true,
+            visible: plane.visible,
+            imageWidth: (texture.image as HTMLCanvasElement | undefined)?.width ?? null,
+            imageHeight: (texture.image as HTMLCanvasElement | undefined)?.height ?? null,
+          })
+        } catch (err) {
+          console.debug('[Threewebview] failed to send plane-state', err)
+        }
+      }
+      if (index === store.currentIndex && !plane.visible) {
+        plane.visible = true
+        console.log(`[Threewebview] Ensuring plane ${index} is visible for current slide`)
+      }
+    }
 
     // FIXED: Mark texture as loaded when we receive first frame (during initial loading)
     if (isInitialLoading.value && !store.setupMode && !loadedTextures.value.has(index)) {
@@ -176,13 +202,25 @@ const createPlanes = () => {
 
   const planeGeometry = new THREE.PlaneGeometry(planeConfig.width, planeConfig.height)
 
-  urls.value.forEach((url, index) => {
-  const texture = new THREE.Texture()
-  // Use nearest filtering to keep page pixels exact and avoid smoothing
-  texture.minFilter = THREE.NearestFilter
-  texture.magFilter = THREE.NearestFilter
-  texture.generateMipmaps = false
-  texture.colorSpace = THREE.LinearSRGBColorSpace
+  urls.value.forEach((_, index) => {
+    const texture = new THREE.Texture()
+    // Use nearest filtering to keep page pixels exact and avoid smoothing
+    texture.minFilter = THREE.NearestFilter
+    texture.magFilter = THREE.NearestFilter
+    texture.generateMipmaps = false
+    texture.colorSpace = THREE.SRGBColorSpace
+
+    // Seed texture with a 2x2 placeholder so WebGL never sees a zero-sized attachment
+    const placeholder = document.createElement('canvas')
+    placeholder.width = 2
+    placeholder.height = 2
+    const phCtx = placeholder.getContext('2d')
+    if (phCtx) {
+      phCtx.fillStyle = '#000'
+      phCtx.fillRect(0, 0, placeholder.width, placeholder.height)
+    }
+    texture.image = placeholder as any
+    texture.needsUpdate = true
     textures.push(texture)
 
     const material = new THREE.MeshBasicMaterial({
@@ -518,6 +556,34 @@ onMounted(async () => {
   initScene()
   createPlanes()
   animate()
+  const win = window as any
+  win.__debugFrames = true
+  win.__dumpThreewebview = () => {
+    return {
+      currentIndex: store.currentIndex,
+      planes: planes.map((plane, idx) => {
+        const material = plane.material as THREE.MeshBasicMaterial
+        const map = material?.map as THREE.Texture | undefined
+        const image = map?.image as { width?: number; height?: number } | undefined
+        return {
+          index: idx,
+          visible: plane.visible,
+          materialHasMap: Boolean(map),
+          mapNeedsUpdate: map?.needsUpdate ?? false,
+          imageSize: image ? { width: image.width ?? null, height: image.height ?? null } : null,
+        }
+      }),
+      textures: textures.map((texture, idx) => {
+        const image = texture.image as { width?: number; height?: number } | undefined
+        return {
+          index: idx,
+          hasImage: Boolean(image),
+          imageSize: image ? { width: image.width ?? null, height: image.height ?? null } : null,
+          needsUpdate: texture.needsUpdate,
+        }
+      }),
+    }
+  }
 
   // Only register the webview-loaded handler here
   // webview-frame is handled by the composable via setupListeners()

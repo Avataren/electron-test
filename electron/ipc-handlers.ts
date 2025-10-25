@@ -91,6 +91,22 @@ export class IPCHandlers {
         console.warn('[IPC] failed to log texture-applied', err)
       }
     })
+
+    ipcMain.on('frame-stats', (event, data) => {
+      try {
+        console.log('[IPC] frame-stats', data)
+      } catch (err) {
+        console.warn('[IPC] failed to log frame-stats', err)
+      }
+    })
+
+    ipcMain.on('plane-state', (event, data) => {
+      try {
+        console.log('[IPC] plane-state', data)
+      } catch (err) {
+        console.warn('[IPC] failed to log plane-state', err)
+      }
+    })
   }
 
   unregister(): void {
@@ -103,5 +119,8 @@ export class IPCHandlers {
     ipcMain.removeHandler('enable-painting')
     ipcMain.removeHandler('disable-painting')
       ipcMain.removeAllListeners('initial-frame-ack')
+    ipcMain.removeAllListeners('texture-applied')
+    ipcMain.removeAllListeners('frame-stats')
+    ipcMain.removeAllListeners('plane-state')
   }
 }

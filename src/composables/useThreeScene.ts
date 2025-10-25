@@ -23,6 +23,7 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
       1000,
     )
     camera.value.position.z = DISTANCE
+    camera.value.lookAt(0, 0, 0)
 
     renderer.value = new THREE.WebGLRenderer({
       canvas: canvasRef.value,
@@ -30,7 +31,7 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
     })
     renderer.value.setSize(window.innerWidth, window.innerHeight)
     renderer.value.setPixelRatio(window.devicePixelRatio)
-    renderer.value.outputColorSpace = THREE.LinearSRGBColorSpace
+    renderer.value.outputColorSpace = THREE.SRGBColorSpace
   }
 
   const onResize = (contentAspect?: number) => {
