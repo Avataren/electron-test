@@ -107,6 +107,14 @@ export class IPCHandlers {
         console.warn('[IPC] failed to log plane-state', err)
       }
     })
+
+    ipcMain.on('render-stats', (event, data) => {
+      try {
+        console.log('[IPC] render-stats', data)
+      } catch (err) {
+        console.warn('[IPC] failed to log render-stats', err)
+      }
+    })
   }
 
   unregister(): void {
@@ -122,5 +130,6 @@ export class IPCHandlers {
     ipcMain.removeAllListeners('texture-applied')
     ipcMain.removeAllListeners('frame-stats')
     ipcMain.removeAllListeners('plane-state')
+    ipcMain.removeAllListeners('render-stats')
   }
 }

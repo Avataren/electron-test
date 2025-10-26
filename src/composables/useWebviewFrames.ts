@@ -230,11 +230,17 @@ export function useWebviewFrames(
 
         // Get safe dimensions that respect GPU limits
         const { width: pageWidth, height: pageHeight } = getSafeDimensions(initialDims.width, initialDims.height)
-        console.log(`[useWebviewFrames] 🖼️ Creating canvas for ${index}: ${pageWidth}x${pageHeight}`)
+        console.log(`[useWebviewFrames] 🖼️ Preparing canvas for ${index}: ${pageWidth}x${pageHeight}`)
 
-        const canvas = document.createElement('canvas')
-        canvas.width = pageWidth
-        canvas.height = pageHeight
+        let canvas = texture.image as HTMLCanvasElement | undefined
+        if (!canvas) {
+          canvas = document.createElement('canvas')
+          texture.image = canvas as any
+        }
+        if (canvas.width !== pageWidth || canvas.height !== pageHeight) {
+          canvas.width = pageWidth
+          canvas.height = pageHeight
+        }
         const ctx = canvas.getContext('2d')
 
         if (!ctx) {
@@ -277,18 +283,11 @@ export function useWebviewFrames(
         texture.magFilter = THREE.NearestFilter
         texture.generateMipmaps = false
 
-        // Handle texture resizing if needed
-        if (texture.image) {
-          const oldImage = texture.image as HTMLCanvasElement
-          if (oldImage.width !== canvas.width || oldImage.height !== canvas.height) {
-            console.log(`[useWebviewFrames] 🔄 Resizing texture ${index} from ${oldImage.width}x${oldImage.height} to ${canvas.width}x${canvas.height}`)
-            texture.dispose()
-          }
+        // Ensure texture references this canvas
+        if (texture.image !== canvas) {
+          texture.image = canvas as any
         }
-
-        // Assign the canvas
-        texture.image = canvas as any
-        console.log(`[useWebviewFrames] ✅ Assigned canvas to texture ${index}`)
+        console.log(`[useWebviewFrames] ✅ Updated canvas texture for ${index}`)
 
         try {
           if (_win.__debugFrames) {
@@ -389,9 +388,14 @@ export function useWebviewFrames(
         let pageWidth = size?.width || img.naturalWidth || img.width
         let pageHeight = size?.height || img.naturalHeight || img.height
 
-        const canvas = document.createElement('canvas')
-        canvas.width = pageWidth
-        canvas.height = pageHeight
+        let canvas = texture.image as HTMLCanvasElement | undefined
+        if (!canvas) {
+          canvas = document.createElement('canvas')
+        }
+        if (canvas.width !== pageWidth || canvas.height !== pageHeight) {
+          canvas.width = pageWidth
+          canvas.height = pageHeight
+        }
         const ctx = canvas.getContext('2d')
         if (ctx) {
           ctx.imageSmoothingEnabled = false
@@ -458,7 +462,7 @@ export function useWebviewFrames(
             if (previewCtx && texture.image instanceof HTMLCanvasElement) {
               previewCtx.imageSmoothingEnabled = false
               previewCtx.clearRect(0, 0, previewWidth, previewHeight)
-              previewCtx.drawImage(texture.image, 0, 0, previewWidth, previewHeight)
+            previewCtx.drawImage(texture.image as HTMLCanvasElement, 0, 0, previewWidth, previewHeight)
             }
             preview.id = `debug-frame-${index}`
             preview.style.position = 'fixed'

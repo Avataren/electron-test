@@ -22,6 +22,7 @@ const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
 let transitionManager: TransitionManager | null = null
 const win: any = window
+let renderStatCounter = 0
 
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
@@ -37,25 +38,25 @@ const pageAspect = ref<number | null>(null)
     const texture = textures[index]
     const plane = planes[index]
     if (plane && texture && plane.material instanceof THREE.MeshBasicMaterial) {
-      if (plane.material.map !== texture) {
-        plane.material.map = texture
-        plane.material.needsUpdate = true
-        console.log(`[Threewebview] Bound texture ${index} to plane material`)
-        try {
-          win.ipcRenderer?.send('plane-state', {
-            index,
-            mapAssigned: true,
-            visible: plane.visible,
-            imageWidth: (texture.image as HTMLCanvasElement | undefined)?.width ?? null,
-            imageHeight: (texture.image as HTMLCanvasElement | undefined)?.height ?? null,
-          })
-        } catch (err) {
-          console.debug('[Threewebview] failed to send plane-state', err)
-        }
-      }
-      if (index === store.currentIndex && !plane.visible) {
-        plane.visible = true
-        console.log(`[Threewebview] Ensuring plane ${index} is visible for current slide`)
+      plane.material.map = texture
+      plane.material.needsUpdate = true
+      plane.visible = plane.visible || index === store.currentIndex
+
+      const image = texture.image as HTMLCanvasElement | undefined
+      try {
+        win.ipcRenderer?.send('plane-state', {
+          index,
+          currentIndex: store.currentIndex,
+          visible: plane.visible,
+          setupMode: store.setupMode,
+          allTexturesLoaded: allTexturesLoaded.value,
+          materialHasMap: Boolean(plane.material.map),
+          textureNeedsUpdate: texture.needsUpdate,
+          imageWidth: image?.width ?? null,
+          imageHeight: image?.height ?? null,
+        })
+      } catch (err) {
+        console.debug('[Threewebview] failed to send plane-state', err)
       }
     }
 
@@ -200,17 +201,10 @@ const createPlanes = () => {
     aspect: camera.value.aspect,
   })
 
-  const planeGeometry = new THREE.PlaneGeometry(planeConfig.width, planeConfig.height)
+ const planeGeometry = new THREE.PlaneGeometry(planeConfig.width, planeConfig.height)
 
   urls.value.forEach((_, index) => {
-    const texture = new THREE.Texture()
-    // Use nearest filtering to keep page pixels exact and avoid smoothing
-    texture.minFilter = THREE.NearestFilter
-    texture.magFilter = THREE.NearestFilter
-    texture.generateMipmaps = false
-    texture.colorSpace = THREE.SRGBColorSpace
-
-    // Seed texture with a 2x2 placeholder so WebGL never sees a zero-sized attachment
+    // Seed texture with a tiny canvas so WebGL never sees a zero-sized attachment.
     const placeholder = document.createElement('canvas')
     placeholder.width = 2
     placeholder.height = 2
@@ -219,13 +213,19 @@ const createPlanes = () => {
       phCtx.fillStyle = '#000'
       phCtx.fillRect(0, 0, placeholder.width, placeholder.height)
     }
-    texture.image = placeholder as any
+
+    const texture = new THREE.CanvasTexture(placeholder)
+    texture.minFilter = THREE.NearestFilter
+    texture.magFilter = THREE.NearestFilter
+    texture.generateMipmaps = false
+    texture.colorSpace = THREE.LinearSRGBColorSpace
     texture.needsUpdate = true
     textures.push(texture)
 
     const material = new THREE.MeshBasicMaterial({
       map: texture,
-      side: THREE.FrontSide,
+      side: THREE.DoubleSide,
+      transparent: true,
     })
 
     const plane = new THREE.Mesh(planeGeometry, material)
@@ -355,6 +355,27 @@ const animate = () => {
   if (renderer.value && scene.value && camera.value) {
     try {
       renderer.value.render(scene.value, camera.value)
+      renderStatCounter++
+      const info = renderer.value.info
+      if (renderStatCounter === 1 || renderStatCounter % 60 === 0) {
+        const info = renderer.value.info
+        try {
+          win.ipcRenderer?.send('render-stats', {
+            frame: Date.now(),
+            renderCalls: info.render.calls,
+            renderTriangles: info.render.triangles,
+            renderLines: info.render.lines,
+            renderPoints: info.render.points,
+            memoryGeometries: info.memory.geometries,
+            memoryTextures: info.memory.textures,
+            sceneChildren: scene.value.children.length,
+            setupMode: store.setupMode,
+            allTexturesLoaded: allTexturesLoaded.value,
+          })
+        } catch (err) {
+          console.debug('[Threewebview] failed to send render-stats', err)
+        }
+      }
     } catch (err) {
       console.error('[Threewebview] WebGL render error — will continue animation loop', err)
     }
