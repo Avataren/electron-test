@@ -23,6 +23,8 @@ const textures: THREE.Texture[] = []
 let transitionManager: TransitionManager | null = null
 const win: any = window
 let renderStatCounter = 0
+let animationFrameId: number | null = null
+let needsRender = false
 
 const transitionsEnabled = true
 
@@ -62,6 +64,8 @@ const pageAspect = ref<number | null>(null)
       }
     }
 
+    requestRender()
+
     // FIXED: Mark texture as loaded when we receive first frame (during initial loading)
     if (isInitialLoading.value && !store.setupMode && !loadedTextures.value.has(index)) {
       console.log(`✅ Texture ${index} received first frame and applied to THREE.Texture`)
@@ -79,12 +83,14 @@ const pageAspect = ref<number | null>(null)
       loadedTextures.value.add(index)
       checkAllTexturesLoaded()
       // Continue to skip resize operations during initial loading
+      requestRender()
       return
     }
 
     // Skip resize operations during initial loading to prevent interrupting texture load
     if (isInitialLoading.value) {
       console.debug('[Threewebview] Skipping resize during initial loading', { index })
+      requestRender()
       return
     }
 
@@ -164,8 +170,12 @@ const pageAspect = ref<number | null>(null)
             plane.visible = i === store.currentIndex
           })
         }
+
+        requestRender()
       }
     }
+
+    requestRender()
   },
 )
 
@@ -241,6 +251,8 @@ const createPlanes = () => {
   transitionManager = transitionsEnabled
     ? new TransitionManager(scene.value, textures, planeConfig)
     : null
+
+  requestRender()
 }
 
 // const validateTextureSize = (width: number, height: number, maxSize: number) => {
@@ -335,18 +347,67 @@ const handleResize = async () => {
   } catch (err) {
     console.error('[Threewebview] Fatal resize error:', err)
   } finally {
+    requestRender()
     isResizing.value = false
   }
 }
 
-const animate = () => {
-  requestAnimationFrame(animate)
+function renderScene() {
+  if (!(renderer.value && scene.value && camera.value)) {
+    return
+  }
 
-  if (store.isTransitioning && transitionManager) {
+  try {
+    renderer.value.render(scene.value, camera.value)
+    renderStatCounter++
+    const info = renderer.value.info
+    if (renderStatCounter === 1 || renderStatCounter % 60 === 0) {
+      try {
+        win.ipcRenderer?.send('render-stats', {
+          frame: Date.now(),
+          renderCalls: info.render.calls,
+          renderTriangles: info.render.triangles,
+          renderLines: info.render.lines,
+          renderPoints: info.render.points,
+          memoryGeometries: info.memory.geometries,
+          memoryTextures: info.memory.textures,
+          sceneChildren: scene.value.children.length,
+          setupMode: store.setupMode,
+          allTexturesLoaded: allTexturesLoaded.value,
+        })
+      } catch (err) {
+        console.debug('[Threewebview] failed to send render-stats', err)
+      }
+    }
+  } catch (err) {
+    console.error('[Threewebview] WebGL render error — will continue animation loop', err)
+  }
+}
+
+function ensureAnimationLoop() {
+  if (animationFrameId === null) {
+    animationFrameId = requestAnimationFrame(animationLoop)
+  }
+}
+
+function requestRender() {
+  needsRender = true
+  ensureAnimationLoop()
+}
+
+function animationLoop() {
+  animationFrameId = null
+
+  const hasActiveTransition =
+    store.isTransitioning && Boolean(transitionManager?.hasActiveTransition())
+
+  let shouldRender = needsRender
+  needsRender = false
+
+  if (hasActiveTransition && transitionManager) {
+    shouldRender = true
     const isComplete = transitionManager.update()
     if (isComplete) {
-      // Visual transition is complete, but DON'T set isTransitioning to false here
-      // It will be set to false at the end of the transition() function
       const nextIdx = (store.currentIndex + 1) % urls.value.length
       const nextNextIdx = (store.currentIndex + 2) % urls.value.length
       console.log(
@@ -356,33 +417,14 @@ const animate = () => {
     }
   }
 
-  if (renderer.value && scene.value && camera.value) {
-    try {
-      renderer.value.render(scene.value, camera.value)
-      renderStatCounter++
-      const info = renderer.value.info
-      if (renderStatCounter === 1 || renderStatCounter % 60 === 0) {
-        const info = renderer.value.info
-        try {
-          win.ipcRenderer?.send('render-stats', {
-            frame: Date.now(),
-            renderCalls: info.render.calls,
-            renderTriangles: info.render.triangles,
-            renderLines: info.render.lines,
-            renderPoints: info.render.points,
-            memoryGeometries: info.memory.geometries,
-            memoryTextures: info.memory.textures,
-            sceneChildren: scene.value.children.length,
-            setupMode: store.setupMode,
-            allTexturesLoaded: allTexturesLoaded.value,
-          })
-        } catch (err) {
-          console.debug('[Threewebview] failed to send render-stats', err)
-        }
-      }
-    } catch (err) {
-      console.error('[Threewebview] WebGL render error — will continue animation loop', err)
-    }
+  if (shouldRender) {
+    renderScene()
+  }
+
+  if (transitionManager?.hasActiveTransition()) {
+    ensureAnimationLoop()
+  } else if (needsRender) {
+    ensureAnimationLoop()
   }
 }
 
@@ -465,10 +507,13 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   // Start the visual transition effect
   if (transitionsEnabled && transitionManager) {
     transitionManager.startTransition(type, fromIndex, fromPlane.position)
+    ensureAnimationLoop()
+    requestRender()
   }
 
   // Hide the old plane
   fromPlane.visible = false
+  requestRender()
 
   if (!transitionsEnabled) {
     store.setTransitioning(false)
@@ -507,6 +552,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
   // NOW set transitioning to false - after everything is truly complete
   store.setTransitioning(false)
+  requestRender()
 }
 
 const rotateWebview = () => {
@@ -553,6 +599,7 @@ const checkAllTexturesLoaded = () => {
       updateActivePaintingWindows([0, 1, 2])
       setTimeout(() => startTimers(), 2000)
     }, 100)
+    requestRender()
   }
   loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
 }
@@ -589,7 +636,6 @@ onMounted(async () => {
   await loadUrls()
   initScene()
   createPlanes()
-  animate()
   const win = window as any
   win.__debugFrames = true
   win.__dumpThreewebview = () => {
@@ -642,6 +688,12 @@ onUnmounted(() => {
   if (transitionManager) {
     transitionManager.cleanup()
   }
+
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
+  needsRender = false
 
   dispose()
   textures.forEach((texture) => texture.dispose())
