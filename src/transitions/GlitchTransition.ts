@@ -13,7 +13,7 @@ export class GlitchTransition extends BaseTransition {
   const texture = this.textures[fromIndex]
   if (!texture) return
 
-  texture.colorSpace = THREE.LinearSRGBColorSpace
+  texture.colorSpace = THREE.SRGBColorSpace
   texture.needsUpdate = true
 
     // Custom shader for glitch effect

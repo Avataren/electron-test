@@ -66,6 +66,7 @@ describe('useWebviewFrames resize handling', () => {
           this.handlers.delete(name)
         },
         invoke: vi.fn(),
+        send: vi.fn(),
       },
     }
   })
@@ -114,16 +115,22 @@ describe('useWebviewFrames resize handling', () => {
     // Call the handler as a raw frame
     handler(null, { index: 0, buffer: raw, size: { width, height }, format: 'raw' })
 
-    // After handler runs, texture.image should be the canvas we created
+    // After handler runs, texture.image should be a DataTexture image block
     expect(callbackCalled).toBe(true)
-  expect(textures[0]?.image).toBeDefined()
-  // The mocked canvas stores width/height
-  expect(((textures[0] as any)?.image as any)?.width).toBe(800)
-  expect(((textures[0] as any)?.image as any)?.height).toBe(600)
+    expect(textures[0]).toBeInstanceOf(THREE.DataTexture)
+    const image = (textures[0] as THREE.DataTexture).image as {
+      data: Uint8Array
+      width: number
+      height: number
+    }
+    expect(image.width).toBe(800)
+    expect(image.height).toBe(600)
+    expect(image.data).toBeInstanceOf(Uint8Array)
+    expect(image.data.length).toBe(width * height * 4)
 
     // Check texture filtering
-  expect((textures[0] as any)?.minFilter).toBe(THREE.NearestFilter)
-  expect((textures[0] as any)?.magFilter).toBe(THREE.NearestFilter)
-  expect((textures[0] as any)?.generateMipmaps).toBe(false)
+    expect((textures[0] as any)?.minFilter).toBe(THREE.NearestFilter)
+    expect((textures[0] as any)?.magFilter).toBe(THREE.NearestFilter)
+    expect((textures[0] as any)?.generateMipmaps).toBe(false)
   })
 })

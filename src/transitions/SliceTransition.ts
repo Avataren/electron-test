@@ -20,7 +20,7 @@ export class SliceTransition extends BaseTransition {
     // Use existing texture reference to keep it in sync with the source
     this.sharedTexture = this.textures[fromIndex] || null
     if (this.sharedTexture) {
-      this.sharedTexture.colorSpace = THREE.LinearSRGBColorSpace
+      this.sharedTexture.colorSpace = THREE.SRGBColorSpace
       this.sharedTexture.needsUpdate = true
     }
 

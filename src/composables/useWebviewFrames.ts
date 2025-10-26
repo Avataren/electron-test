@@ -119,86 +119,143 @@ export function useWebviewFrames(
     pendingFrameRafs.set(index, raf)
   }
 
+  const ensureDataTexture = (
+    texIndex: number,
+    width: number,
+    height: number,
+  ): THREE.DataTexture => {
+    const expectedLength = width * height * 4
+    let target = textures[texIndex] as THREE.DataTexture | undefined
+
+    const needsRebuild =
+      !target ||
+      !(target instanceof THREE.DataTexture) ||
+      !(target.image && (target.image as any).data) ||
+      Boolean(target.userData?.isPlaceholder) ||
+      (target.image as any).width !== width ||
+      (target.image as any).height !== height
+
+    if (needsRebuild) {
+      if (target) {
+        try {
+          target.dispose()
+        } catch (err) {
+          console.debug('[useWebviewFrames] Failed to dispose existing texture before rebuild', err)
+        }
+      }
+
+      const data = new Uint8Array(expectedLength)
+      const rebuilt = new THREE.DataTexture(
+        data,
+        width,
+        height,
+        THREE.RGBAFormat,
+        THREE.UnsignedByteType,
+      )
+      rebuilt.minFilter = THREE.NearestFilter
+      rebuilt.magFilter = THREE.NearestFilter
+      rebuilt.generateMipmaps = false
+      rebuilt.colorSpace = THREE.SRGBColorSpace
+      rebuilt.needsUpdate = false
+      rebuilt.userData = rebuilt.userData || {}
+      rebuilt.userData.isPlaceholder = false
+      textures[texIndex] = rebuilt
+      return rebuilt
+    }
+
+    const image = target.image as { data: Uint8Array; width: number; height: number }
+    if (!(image.data instanceof Uint8Array) || image.data.length !== expectedLength) {
+      image.data = new Uint8Array(expectedLength)
+    }
+
+    image.width = width
+    image.height = height
+
+    target.minFilter = THREE.NearestFilter
+    target.magFilter = THREE.NearestFilter
+    target.generateMipmaps = false
+    target.colorSpace = THREE.SRGBColorSpace
+    target.userData = target.userData || {}
+    target.userData.isPlaceholder = false
+
+    return target
+  }
+
+  const writeBGRAIntoTexture = (
+    texture: THREE.DataTexture,
+    src: Uint8Array,
+    forceOpaque = true,
+  ): void => {
+    const image = texture.image as { data: Uint8Array; width: number; height: number }
+    const dest = image.data
+    const pixelCount = image.width * image.height
+
+    for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
+      const bi = i * 4
+      dest[j] = src[bi + 2] ?? 0
+      dest[j + 1] = src[bi + 1] ?? 0
+      dest[j + 2] = src[bi + 0] ?? 0
+      dest[j + 3] = forceOpaque ? 255 : src[bi + 3] ?? 255
+    }
+  }
+
+  const updateDebugPreview = (
+    index: number,
+    width: number,
+    height: number,
+    rgbaBuffer: Uint8Array,
+  ) => {
+    if (!_win.__debugFrames) return
+    try {
+      const clamped = new Uint8ClampedArray(rgbaBuffer.buffer.slice(0))
+      const imageData = new ImageData(clamped, width, height)
+
+      let preview = document.getElementById(`debug-frame-${index}`) as HTMLCanvasElement | null
+      if (!preview) {
+        preview = document.createElement('canvas')
+        preview.id = `debug-frame-${index}`
+        preview.style.position = 'fixed'
+        preview.style.right = '20px'
+        preview.style.zIndex = '9999'
+        preview.style.border = '1px solid rgba(255,255,255,0.3)'
+        preview.style.background = '#000'
+        document.body.appendChild(preview)
+      }
+
+      preview.width = width
+      preview.height = height
+      const ctx = preview.getContext('2d')
+      if (ctx) {
+        ctx.imageSmoothingEnabled = false
+        ctx.putImageData(imageData, 0, 0)
+      }
+
+      const maxPreviewWidth = 320
+      const aspect = width > 0 && height > 0 ? width / height : 1
+      const displayWidth = Math.min(maxPreviewWidth, width)
+      const displayHeight = Math.max(1, Math.round(displayWidth / aspect))
+      preview.style.width = `${displayWidth}px`
+      preview.style.height = `${displayHeight}px`
+      preview.style.bottom = `${20 + index * (displayHeight + 12)}px`
+    } catch (err) {
+      console.debug('[useWebviewFrames] failed to update debug preview', err)
+    }
+  }
+
   const applyFrameToTexture = (data: IncomingFrame): boolean => {
     const { index, buffer, size, format } = data as any
 
-    const existingTexture = textures[index]
-    if (!existingTexture) {
+    if (!textures[index]) {
       console.warn(`[useWebviewFrames] ⚠️ Texture ${index} not ready; queuing incoming frame`)
       return false
     }
 
-    let texture: THREE.Texture = existingTexture
-
-    const ensureCanvasTexture = (
-      currentTexture: THREE.Texture | undefined,
-      canvas: HTMLCanvasElement,
-    ): THREE.Texture => {
-      let targetTexture = currentTexture
-      const isPlaceholder = Boolean((targetTexture as any)?.userData?.isPlaceholder)
-      const needsRebuild =
-        !targetTexture ||
-        !(targetTexture instanceof THREE.CanvasTexture) ||
-        isPlaceholder ||
-        targetTexture.image === undefined ||
-        targetTexture.image === null
-
-      if (needsRebuild) {
-        if (targetTexture) {
-          try {
-            targetTexture.dispose()
-          } catch (err) {
-            console.debug('[useWebviewFrames] Failed to dispose placeholder texture', err)
-          }
-        }
-
-        const rebuilt = new THREE.CanvasTexture(canvas)
-        rebuilt.minFilter = THREE.NearestFilter
-        rebuilt.magFilter = THREE.NearestFilter
-        rebuilt.generateMipmaps = false
-        rebuilt.colorSpace = THREE.LinearSRGBColorSpace
-        rebuilt.needsUpdate = false
-        rebuilt.userData = rebuilt.userData || {}
-        rebuilt.userData.isPlaceholder = false
-
-        textures[index] = rebuilt
-        return rebuilt
-      }
-
-      if (targetTexture.image !== canvas) {
-        targetTexture.image = canvas as any
-      }
-      targetTexture.minFilter = THREE.NearestFilter
-      targetTexture.magFilter = THREE.NearestFilter
-      targetTexture.generateMipmaps = false
-      targetTexture.colorSpace = THREE.LinearSRGBColorSpace
-      targetTexture.userData = targetTexture.userData || {}
-      targetTexture.userData.isPlaceholder = false
-
-      return targetTexture
-    }
-
-    // ENHANCED DEBUG: Show incoming IPC payload shape
-    try {
-      const approxLen = (buffer && ((buffer as any).byteLength || (buffer as any).length)) || 0
-      // console.log(`[useWebviewFrames] 📥 Received frame ${index}:`, {
-      //   format,
-      //   bufferBytes: approxLen,
-      //   reportedSize: size,
-      //   bufferType: Object.prototype.toString.call(buffer)
-      // })
-    } catch (err) {
-      console.error('[useWebviewFrames] Failed to inspect buffer:', err)
-    }
-
-    // Helper function to get maximum texture size
     const getMaxTextureSize = () => {
       try {
         const canvas = document.createElement('canvas')
         const gl = canvas.getContext('webgl')
         if (!gl) return 8192
 
-        // Get max size and validate it's reasonable
         const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE)
         return maxSize > 0 && maxSize <= 16384 ? maxSize : 8192
       } catch (err) {
@@ -207,7 +264,6 @@ export function useWebviewFrames(
       }
     }
 
-    // Helper function to calculate safe dimensions
     const getSafeDimensions = (width: number, height: number) => {
       const maxSize = getMaxTextureSize()
       if (width <= maxSize && height <= maxSize) {
@@ -216,21 +272,20 @@ export function useWebviewFrames(
       const scale = maxSize / Math.max(width, height)
       return {
         width: Math.max(1, Math.floor(width * scale)),
-        height: Math.max(1, Math.floor(height * scale))
+        height: Math.max(1, Math.floor(height * scale)),
       }
     }
 
-    // If the main process sent raw pixel data (Buffer), convert BGRA -> RGBA
     if (format === 'sabs' || format === 'raw') {
       try {
-        //console.log(`[useWebviewFrames] 🎨 Processing raw/sabs frame for index ${index}`)
-
         const reportedWidth = size?.width || 1
         const reportedHeight = size?.height || 1
 
-        const srcArr = format === 'sabs' ? new Uint8Array(buffer as SharedArrayBuffer) : new Uint8Array(buffer)
+        const srcArr =
+          format === 'sabs'
+            ? new Uint8Array(buffer as SharedArrayBuffer)
+            : new Uint8Array(buffer)
         const byteLength = srcArr.length
-
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
 
         logFrameStats(index, srcArr, reportedWidth, reportedHeight, format)
@@ -240,29 +295,21 @@ export function useWebviewFrames(
         const dprHeight = Math.max(1, Math.round(reportedHeight * dpr))
         const dprBytes = dprWidth * dprHeight * 4
 
-        // Determine initial dimensions based on buffer size
-        let initialDims = { width: 0, height: 0 }
+        let initialWidth = 0
+        let initialHeight = 0
+
         if (byteLength === reportedBytes) {
-          initialDims = { width: reportedWidth, height: reportedHeight }
-          //console.log(`[useWebviewFrames] ✓ Buffer matches CSS size for ${index}:`, initialDims)
+          initialWidth = reportedWidth
+          initialHeight = reportedHeight
         } else if (byteLength === dprBytes) {
-          initialDims = { width: dprWidth, height: dprHeight }
-          //console.log(`[useWebviewFrames] ✓ Buffer matches DPR size for ${index}:`, initialDims, `(dpr=${dpr})`)
+          initialWidth = dprWidth
+          initialHeight = dprHeight
         } else {
-          // Unknown sizing: try to infer width from reportedWidth and buffer size
           const inferredHeight = Math.max(1, Math.round(byteLength / (reportedWidth * 4)))
           if (inferredHeight * reportedWidth * 4 === byteLength) {
-            initialDims = { width: reportedWidth, height: inferredHeight }
-            //console.warn(`[useWebviewFrames] ⚠️ Inferred size for ${index}:`, initialDims)
+            initialWidth = reportedWidth
+            initialHeight = inferredHeight
           } else {
-            // console.error(`[useWebviewFrames] ❌ Ignoring frame ${index} - size mismatch:`, {
-            //   reportedWidth,
-            //   reportedHeight,
-            //   reportedBytes,
-            //   dprBytes,
-            //   actualBytes: byteLength,
-            //   dpr
-            // })
             try {
               _win.ipcRenderer?.send('frame-rejected', {
                 index,
@@ -278,149 +325,54 @@ export function useWebviewFrames(
           }
         }
 
-        // Get safe dimensions that respect GPU limits
-        const { width: pageWidth, height: pageHeight } = getSafeDimensions(initialDims.width, initialDims.height)
-        //console.log(`[useWebviewFrames] 🖼️ Preparing canvas for ${index}: ${pageWidth}x${pageHeight}`)
+        const { width: pageWidth, height: pageHeight } = getSafeDimensions(
+          initialWidth,
+          initialHeight,
+        )
 
-        let canvas = texture.image as HTMLCanvasElement | undefined
-        if (!canvas) {
-          canvas = document.createElement('canvas')
-        }
+        const dataTexture = ensureDataTexture(index, pageWidth, pageHeight)
+        writeBGRAIntoTexture(dataTexture, srcArr, true)
+        dataTexture.needsUpdate = true
 
-        if (canvas.width !== pageWidth || canvas.height !== pageHeight) {
-          canvas.width = pageWidth
-          canvas.height = pageHeight
-        }
-
-        texture = ensureCanvasTexture(texture, canvas)
-
-        const ctx = canvas.getContext('2d')
-
-        if (!ctx) {
-          console.error('❌ 2D context not available for canvas')
-          return true
-        }
-
-        const pixelCount = pageWidth * pageHeight
-        const out = new Uint8ClampedArray(pixelCount * 4)
-
-        // Convert BGRA -> RGBA
-        // NOTE: The mesh material stays transparent so transition fades keep working, but
-        // offscreen frames can occasionally ship with zeroed alpha. We coerce the texture
-        // alpha channel to fully opaque so the slideshow never renders as black just because
-        // the buffer arrived with premultiplied transparency.
-        //console.log(`[useWebviewFrames] 🔄 Converting BGRA to RGBA for ${index}...`)
-        for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
-          const bi = i * 4
-          const b = srcArr[bi + 0] ?? 0
-          const g = srcArr[bi + 1] ?? 0
-          const r = srcArr[bi + 2] ?? 0
-          const a = 255
-          out[j] = r
-          out[j + 1] = g
-          out[j + 2] = b
-          out[j + 3] = a
-        }
-
-        let imageData: ImageData
-        if (typeof ImageData !== 'undefined') {
-          imageData = new ImageData(out, pageWidth, pageHeight)
-        } else {
-          imageData = { data: out, width: pageWidth, height: pageHeight } as unknown as ImageData
-        }
-
-        ctx.imageSmoothingEnabled = false
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
-        ctx.putImageData(imageData, 0, 0)
-
-        //console.log(`[useWebviewFrames] ✏️ Drew image data to canvas for ${index}`)
-
-        // Setup texture properties first
-        texture.minFilter = THREE.NearestFilter
-        texture.magFilter = THREE.NearestFilter
-        texture.generateMipmaps = false
-        texture.colorSpace = THREE.LinearSRGBColorSpace
-        //console.log(`[useWebviewFrames] ✅ Updated canvas texture for ${index}`)
-
-        try {
-          if (_win.__debugFrames) {
-            const existing = document.getElementById(`debug-frame-${index}`)
-            const preview = document.createElement('canvas')
-            const maxPreviewWidth = 320
-            const previewWidth = Math.min(maxPreviewWidth, pageWidth)
-            const aspect = pageWidth > 0 && pageHeight > 0 ? pageWidth / pageHeight : 1
-            const previewHeight = Math.max(1, Math.round(previewWidth / aspect))
-            preview.width = previewWidth
-            preview.height = previewHeight
-            const previewCtx = preview.getContext('2d')
-            if (previewCtx) {
-              previewCtx.imageSmoothingEnabled = false
-              previewCtx.clearRect(0, 0, previewWidth, previewHeight)
-              previewCtx.drawImage(canvas, 0, 0, previewWidth, previewHeight)
-            }
-            preview.id = `debug-frame-${index}`
-            preview.style.position = 'fixed'
-            preview.style.width = `${previewWidth}px`
-            preview.style.height = `${previewHeight}px`
-            preview.style.right = '20px'
-            preview.style.bottom = `${20 + index * (previewHeight + 12)}px`
-            preview.style.zIndex = '9999'
-            preview.style.border = '1px solid rgba(255,255,255,0.3)'
-            preview.style.background = '#000'
-            if (existing) existing.remove()
-            document.body.appendChild(preview)
-          }
-        } catch (err) {
-          console.debug('[useWebviewFrames] failed to append debug canvas', err)
-        }
-
-        // Ensure dimensions are correct
-        if (texture.source?.data) {
-          texture.source.data.width = canvas.width
-          texture.source.data.height = canvas.height
-        }
-
-        // Mark for update
-        texture.needsUpdate = true
-        //console.log(`[useWebviewFrames] 🔔 Set needsUpdate=true for texture ${index}`)
+        const cssWidth =
+          byteLength === dprBytes ? Math.max(1, Math.round(pageWidth / dpr)) : pageWidth
+        const cssHeight =
+          byteLength === dprBytes ? Math.max(1, Math.round(pageHeight / dpr)) : pageHeight
 
         if (onTextureUpdate) {
-          // Report both CSS/logical pixel dimensions and backing/device dimensions
-          const cssWidth = byteLength === dprBytes ? Math.max(1, Math.round(pageWidth / dpr)) : pageWidth
-          const cssHeight = byteLength === dprBytes ? Math.max(1, Math.round(pageHeight / dpr)) : pageHeight
-          // console.log(`[useWebviewFrames] 📞 Calling onTextureUpdate for ${index}:`, {
-          //   cssWidth,
-          //   cssHeight,
-          //   backingWidth: pageWidth,
-          //   backingHeight: pageHeight
-          // })
-          onTextureUpdate(index, { width: cssWidth, height: cssHeight, backingWidth: pageWidth, backingHeight: pageHeight })
+          onTextureUpdate(index, {
+            width: cssWidth,
+            height: cssHeight,
+            backingWidth: pageWidth,
+            backingHeight: pageHeight,
+          })
+        }
 
         try {
           _win.ipcRenderer?.send('texture-applied', {
             index,
             format,
             width: cssWidth,
-              height: cssHeight,
-              backingWidth: pageWidth,
-              backingHeight: pageHeight,
-            })
-          } catch (err) {
-            console.debug('[useWebviewFrames] failed to send texture-applied event', err)
-          }
-
-          // Send initial-frame ACK
-          try {
-            if (!_win.__initialAckSent) _win.__initialAckSent = new Set<number>()
-            if (!_win.__initialAckSent.has(index)) {
-              _win.__initialAckSent.add(index)
-              _win.ipcRenderer.send('initial-frame-ack', { index })
-              //console.log(`[useWebviewFrames] 📤 Sent initial-frame-ack for ${index}`)
-            }
-          } catch (err) {
-            console.debug('[useWebviewFrames] failed to send initial-frame-ack', err)
-          }
+            height: cssHeight,
+            backingWidth: pageWidth,
+            backingHeight: pageHeight,
+          })
+        } catch (err) {
+          console.debug('[useWebviewFrames] failed to send texture-applied event', err)
         }
+
+        try {
+          if (!_win.__initialAckSent) _win.__initialAckSent = new Set<number>()
+          if (!_win.__initialAckSent.has(index)) {
+            _win.__initialAckSent.add(index)
+            _win.ipcRenderer.send('initial-frame-ack', { index })
+          }
+        } catch (err) {
+          console.debug('[useWebviewFrames] failed to send initial-frame-ack', err)
+        }
+
+        const image = dataTexture.image as { data: Uint8Array }
+        updateDebugPreview(index, pageWidth, pageHeight, image.data)
       } catch (err) {
         console.error(`[useWebviewFrames] ❌ Error processing raw frame for ${index}:`, err)
         return true
@@ -429,7 +381,6 @@ export function useWebviewFrames(
       return true
     }
 
-    // Fallback: treat buffer as an encoded image (jpeg/png)
     console.log(`[useWebviewFrames] 🖼️ Processing encoded image for ${index}`)
     const bufferArray = new Uint8Array(buffer)
     const blob = new Blob([bufferArray], { type: 'image/jpeg' })
@@ -438,121 +389,74 @@ export function useWebviewFrames(
     const img = new Image()
     img.onload = () => {
       try {
-        let pageWidth = size?.width || img.naturalWidth || img.width
-        let pageHeight = size?.height || img.naturalHeight || img.height
+        const intrinsicWidth = img.naturalWidth || img.width
+        const intrinsicHeight = img.naturalHeight || img.height
 
-        let localTexture: THREE.Texture = textures[index] ?? texture
-        let canvas = localTexture?.image as HTMLCanvasElement | undefined
-        if (!canvas) {
-          canvas = document.createElement('canvas')
-        }
-        if (canvas.width !== pageWidth || canvas.height !== pageHeight) {
-          canvas.width = pageWidth
-          canvas.height = pageHeight
-        }
-        localTexture = ensureCanvasTexture(localTexture, canvas)
-        texture = localTexture
+        let targetWidth = size?.width || intrinsicWidth
+        let targetHeight = size?.height || intrinsicHeight
 
-        const ctx = canvas.getContext('2d')
-        if (ctx) {
-          ctx.imageSmoothingEnabled = false
-          ctx.clearRect(0, 0, canvas.width, canvas.height)
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-          localTexture.image = canvas as any
-        } else if (localTexture) {
-          localTexture.image = img as any
-        }
+        const { width: safeWidth, height: safeHeight } = getSafeDimensions(
+          targetWidth,
+          targetHeight,
+        )
 
-        // Get safe dimensions that respect GPU limits
-        const { width: safeWidth, height: safeHeight } = getSafeDimensions(pageWidth, pageHeight)
-
-        // Only scale if dimensions changed
-        if (safeWidth !== pageWidth || safeHeight !== pageHeight) {
+        if (safeWidth !== targetWidth || safeHeight !== targetHeight) {
           console.warn('[useWebviewFrames] Scaling texture to safe dimensions', {
-            original: { width: pageWidth, height: pageHeight },
-            safe: { width: safeWidth, height: safeHeight }
+            original: { width: targetWidth, height: targetHeight },
+            safe: { width: safeWidth, height: safeHeight },
           })
-
-          const safeCanvas = document.createElement('canvas')
-          safeCanvas.width = safeWidth
-          safeCanvas.height = safeHeight
-          const safeCtx = safeCanvas.getContext('2d')
-
-          if (safeCtx && ctx) {
-            safeCtx.imageSmoothingEnabled = false
-            safeCtx.clearRect(0, 0, safeWidth, safeHeight)
-            safeCtx.drawImage(canvas, 0, 0, safeWidth, safeHeight)
-
-            canvas.width = safeWidth
-            canvas.height = safeHeight
-            ctx.imageSmoothingEnabled = false
-            ctx.clearRect(0, 0, safeWidth, safeHeight)
-            ctx.drawImage(safeCanvas, 0, 0)
-
-            pageWidth = safeWidth
-            pageHeight = safeHeight
-          }
         }
 
-        if (localTexture) {
-          localTexture.minFilter = THREE.NearestFilter
-          localTexture.magFilter = THREE.NearestFilter
-          localTexture.generateMipmaps = false
-          localTexture.needsUpdate = true
+        targetWidth = safeWidth
+        targetHeight = safeHeight
+
+        const canvas = document.createElement('canvas')
+        canvas.width = targetWidth
+        canvas.height = targetHeight
+        const ctx = canvas.getContext('2d')
+
+        if (!ctx) {
+          console.error('[useWebviewFrames] Unable to obtain 2D context for encoded frame')
+          URL.revokeObjectURL(url)
+          return
         }
 
-        URL.revokeObjectURL(url)
+        ctx.imageSmoothingEnabled = false
+        ctx.clearRect(0, 0, targetWidth, targetHeight)
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+
+        const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight)
+        const dataTexture = ensureDataTexture(index, targetWidth, targetHeight)
+        const image = dataTexture.image as { data: Uint8Array }
+        image.data.set(imageData.data)
+        dataTexture.needsUpdate = true
 
         if (onTextureUpdate) {
-          onTextureUpdate(index, { width: pageWidth, height: pageHeight, backingWidth: pageWidth, backingHeight: pageHeight })
-        }
-
-        try {
-          if (_win.__debugFrames) {
-            const existing = document.getElementById(`debug-frame-${index}`)
-            const preview = document.createElement('canvas')
-            const maxPreviewWidth = 320
-            const aspect = pageWidth > 0 && pageHeight > 0 ? pageWidth / pageHeight : 1
-            const previewWidth = Math.min(maxPreviewWidth, pageWidth)
-            const previewHeight = Math.max(1, Math.round(previewWidth / aspect))
-            preview.width = previewWidth
-            preview.height = previewHeight
-            const previewCtx = preview.getContext('2d')
-            if (previewCtx && localTexture?.image instanceof HTMLCanvasElement) {
-              previewCtx.imageSmoothingEnabled = false
-              previewCtx.clearRect(0, 0, previewWidth, previewHeight)
-              previewCtx.drawImage(localTexture.image as HTMLCanvasElement, 0, 0, previewWidth, previewHeight)
-            }
-            preview.id = `debug-frame-${index}`
-            preview.style.position = 'fixed'
-            preview.style.width = `${previewWidth}px`
-            preview.style.height = `${previewHeight}px`
-            preview.style.right = '20px'
-            preview.style.bottom = `${20 + index * (previewHeight + 12)}px`
-            preview.style.zIndex = '9999'
-            preview.style.border = '1px solid rgba(255,255,255,0.3)'
-            preview.style.background = '#000'
-            if (existing) existing.remove()
-            document.body.appendChild(preview)
-          }
-        } catch (err) {
-          console.debug('[useWebviewFrames] failed to append debug canvas (encoded path)', err)
+          onTextureUpdate(index, {
+            width: targetWidth,
+            height: targetHeight,
+            backingWidth: targetWidth,
+            backingHeight: targetHeight,
+          })
         }
 
         try {
           _win.ipcRenderer?.send('texture-applied', {
             index,
             format: 'jpeg',
-            width: pageWidth,
-            height: pageHeight,
-            backingWidth: pageWidth,
-            backingHeight: pageHeight,
+            width: targetWidth,
+            height: targetHeight,
+            backingWidth: targetWidth,
+            backingHeight: targetHeight,
           })
         } catch (err) {
           console.debug('[useWebviewFrames] failed to send texture-applied event (encoded path)', err)
         }
+
+        updateDebugPreview(index, targetWidth, targetHeight, image.data)
       } catch (err) {
         console.error('Error updating texture from webview frame', err)
+      } finally {
         URL.revokeObjectURL(url)
       }
     }

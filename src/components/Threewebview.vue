@@ -44,7 +44,7 @@ const pageAspect = ref<number | null>(null)
       plane.material.needsUpdate = true
       plane.visible = plane.visible || index === store.currentIndex
 
-      const image = texture.image as HTMLCanvasElement | undefined
+      const image = texture.image as { width?: number; height?: number } | undefined
       try {
         win.ipcRenderer?.send('plane-state', {
           index,
@@ -206,22 +206,20 @@ const createPlanes = () => {
  const planeGeometry = new THREE.PlaneGeometry(planeConfig.width, planeConfig.height)
 
   urls.value.forEach((_, index) => {
-    // Seed texture with a tiny canvas so WebGL never sees a zero-sized attachment.
-    const placeholder = document.createElement('canvas')
-    placeholder.width = 2
-    placeholder.height = 2
-    const phCtx = placeholder.getContext('2d')
-    if (phCtx) {
-      phCtx.fillStyle = '#000'
-      phCtx.fillRect(0, 0, placeholder.width, placeholder.height)
-    }
-
-    const texture = new THREE.CanvasTexture(placeholder)
+    // Seed texture with opaque pixel data (DataTexture avoids canvas upload races).
+    const placeholderData = new Uint8Array([0, 0, 0, 255])
+    const texture = new THREE.DataTexture(
+      placeholderData,
+      1,
+      1,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    )
     texture.minFilter = THREE.NearestFilter
     texture.magFilter = THREE.NearestFilter
     texture.generateMipmaps = false
-    texture.colorSpace = THREE.LinearSRGBColorSpace
-    texture.needsUpdate = false
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.needsUpdate = true
     texture.userData.isPlaceholder = true
     textures.push(texture)
 

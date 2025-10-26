@@ -25,7 +25,7 @@ export class RainTransition extends BaseTransition {
     // data when the source texture is resized.
     this.sharedTexture = this.textures[fromIndex] || null
     if (this.sharedTexture) {
-      this.sharedTexture.colorSpace = THREE.LinearSRGBColorSpace
+      this.sharedTexture.colorSpace = THREE.SRGBColorSpace
       this.sharedTexture.needsUpdate = true
     }
 

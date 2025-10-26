@@ -15,7 +15,7 @@ export class PixelateTransition extends BaseTransition {
 
   // Use the shared texture reference from the main textures array so it
   // stays up-to-date with resizes and new frames.
-  texture.colorSpace = THREE.LinearSRGBColorSpace
+  texture.colorSpace = THREE.SRGBColorSpace
   texture.needsUpdate = true
 
     // Custom shader for pixelate and dissolve effect
