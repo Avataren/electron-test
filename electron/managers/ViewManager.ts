@@ -1,6 +1,10 @@
 import { BrowserView, BrowserWindow } from 'electron'
-import type { Rectangle, Size } from 'electron'
+import type { Rectangle, Size, WebContents } from 'electron'
 import type { AppConfig } from '../config'
+
+type DevToolsWebContents = WebContents & {
+  getOwnerBrowserWindow?: () => BrowserWindow | null
+}
 
 export class ViewManager {
   private readonly views: Map<number, BrowserView> = new Map()
@@ -41,7 +45,7 @@ export class ViewManager {
       this.clearDevToolsListeners()
       this.updateDevToolsInsets()
       update()
-      const devToolsContents = webContents.devToolsWebContents
+      const devToolsContents = webContents.devToolsWebContents as DevToolsWebContents | undefined
       if (devToolsContents) {
         const handleDevToolsResize = () => {
           this.updateDevToolsInsets()
@@ -223,14 +227,14 @@ export class ViewManager {
       return
     }
 
-    const devToolsContents = webContents.devToolsWebContents
+    const devToolsContents = webContents.devToolsWebContents as DevToolsWebContents | undefined
 
     if (!devToolsContents) {
       this.resetDevToolsInsets()
       return
     }
 
-    const ownerWindow = devToolsContents.getOwnerBrowserWindow?.()
+    const ownerWindow = devToolsContents?.getOwnerBrowserWindow?.() ?? null
 
     if (!ownerWindow) {
       this.resetDevToolsInsets()
