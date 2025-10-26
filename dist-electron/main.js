@@ -1,8 +1,7 @@
-import { BrowserWindow as u, protocol as T, BrowserView as A, ipcMain as r, app as p } from "electron";
-import { fileURLToPath as I } from "node:url";
-import d from "node:path";
-import b from "node:fs/promises";
-const f = {
+import { BrowserWindow, BrowserView, ipcMain, app } from "electron";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+const defaultConfig = {
   urls: [
     "https://www.testufo.com/",
     "https://cubed.no",
@@ -25,53 +24,61 @@ const f = {
     jpegQuality: 85
   }
 };
-class B {
+class WindowManager {
   window = null;
   config;
   viteDevServerUrl;
   rendererDist;
   publicPath;
   devToolsWindows = /* @__PURE__ */ new Map();
-  appProtocolRegistered = !1;
-  constructor(e, t, s, i) {
-    this.config = e, this.viteDevServerUrl = t, this.rendererDist = d.resolve(s), this.publicPath = i;
+  constructor(config, viteDevServerUrl, rendererDist, publicPath) {
+    this.config = config;
+    this.viteDevServerUrl = viteDevServerUrl;
+    this.rendererDist = rendererDist;
+    this.publicPath = publicPath;
   }
-  createWindow(e) {
-    this.window = new u({
+  createWindow(preloadPath) {
+    this.window = new BrowserWindow({
       width: this.config.window.width,
       height: this.config.window.height,
-      icon: d.join(this.publicPath, "favicon.ico"),
+      icon: path.join(this.publicPath, "favicon.ico"),
       webPreferences: {
-        preload: e,
-        nodeIntegration: !1,
-        contextIsolation: !0,
-        sandbox: !0
+        preload: preloadPath,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true
       }
-    }), this.window.webContents.on("did-finish-load", () => {
+    });
+    this.window.webContents.on("did-finish-load", () => {
       this.sendToRenderer("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
     });
     try {
-      this.window.webContents.session.webRequest.onHeadersReceived({ urls: ["*://*/*", "file://*", "app://*"] }, (s, i) => {
-        const n = this.window?.webContents.id;
-        if (!n || s.webContentsId !== n) {
-          i({ responseHeaders: s.responseHeaders });
-          return;
-        }
-        const o = Object.assign({}, s.responseHeaders || {});
-        o["Cross-Origin-Opener-Policy"] = ["same-origin"], o["Cross-Origin-Embedder-Policy"] = ["require-corp"], i({ responseHeaders: o });
+      const ses = this.window.webContents.session;
+      ses.webRequest.onHeadersReceived({ urls: ["*://*/*"] }, (details, callback) => {
+        const responseHeaders = Object.assign({}, details.responseHeaders || {});
+        responseHeaders["Cross-Origin-Opener-Policy"] = ["same-origin"];
+        responseHeaders["Cross-Origin-Embedder-Policy"] = ["require-corp"];
+        callback({ responseHeaders });
       });
-    } catch (t) {
-      console.warn("[WindowManager] failed to enable COOP/COEP headers", t);
+    } catch (err) {
+      console.warn("[WindowManager] failed to enable COOP/COEP headers", err);
     }
-    return this.viteDevServerUrl ? (this.window.webContents.on("before-input-event", (t, s) => {
-      s.type === "keyDown" && s.key.toLowerCase() === "i" && (s.control || s.meta) && s.shift && (t.preventDefault(), this.openDetachedDevTools(this.window?.webContents));
-    }), this.window.webContents.once("did-frame-finish-load", () => {
-      this.openDetachedDevTools(this.window?.webContents);
-    }), this.window.loadURL(this.viteDevServerUrl)) : this.ensureAppProtocol().then(() => {
-      this.isValid() && this.window.loadURL("app://index.html");
-    }).catch((t) => {
-      console.warn("[WindowManager] Failed to register app protocol", t), this.isValid() && this.window.loadFile(d.join(this.rendererDist, "index.html"));
-    }), this.window;
+    if (this.viteDevServerUrl) {
+      this.window.webContents.on("before-input-event", (event, input) => {
+        const isToggle = input.type === "keyDown" && input.key.toLowerCase() === "i" && (input.control || input.meta) && input.shift;
+        if (isToggle) {
+          event.preventDefault();
+          this.openDetachedDevTools(this.window?.webContents);
+        }
+      });
+      this.window.webContents.once("did-frame-finish-load", () => {
+        this.openDetachedDevTools(this.window?.webContents);
+      });
+      this.window.loadURL(this.viteDevServerUrl);
+    } else {
+      this.window.loadFile(path.join(this.rendererDist, "index.html"));
+    }
+    return this.window;
   }
   getWindow() {
     return this.window;
@@ -79,250 +86,260 @@ class B {
   isValid() {
     return this.window !== null && !this.window.isDestroyed();
   }
-  sendToRenderer(e, ...t) {
-    this.isValid() && this.window.webContents.send(e, ...t);
+  sendToRenderer(channel, ...args) {
+    if (this.isValid()) {
+      this.window.webContents.send(channel, ...args);
+    }
   }
   /**
    * Send a message to the renderer using postMessage which supports
    * transfer lists (ArrayBuffers, MessagePorts). Use this when sending
    * large binary buffers like SharedArrayBuffer to avoid serialization errors.
    */
-  postMessageToRenderer(e, t, s) {
-    if (this.isValid())
+  postMessageToRenderer(channel, message, transfer) {
+    if (this.isValid()) {
       try {
-        this.window.webContents.postMessage(e, t, s || []);
-      } catch {
-        this.window.webContents.send(e, t);
+        this.window.webContents.postMessage(channel, message, transfer || []);
+      } catch (err) {
+        this.window.webContents.send(channel, message);
       }
+    }
   }
   getContentBounds() {
-    return this.isValid() ? this.window.getContentBounds() : null;
+    if (this.isValid()) {
+      return this.window.getContentBounds();
+    }
+    return null;
   }
   destroy() {
-    this.window && !this.window.isDestroyed() && this.window.destroy(), this.window = null, this.devToolsWindows.forEach((e) => {
-      e.isDestroyed() || e.close();
-    }), this.devToolsWindows.clear();
+    if (this.window && !this.window.isDestroyed()) {
+      this.window.destroy();
+    }
+    this.window = null;
+    this.devToolsWindows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.close();
+      }
+    });
+    this.devToolsWindows.clear();
   }
-  openDetachedDevTools(e) {
-    if (!e || e.isDestroyed()) return;
-    if (e.isDevToolsOpened()) {
-      const i = this.devToolsWindows.get(e.id);
-      if (i && !i.isDestroyed()) {
-        i.focus();
+  openDetachedDevTools(target) {
+    if (!target || target.isDestroyed()) return;
+    if (target.isDevToolsOpened()) {
+      const existing = this.devToolsWindows.get(target.id);
+      if (existing && !existing.isDestroyed()) {
+        existing.focus();
         return;
       }
     }
-    let t = this.devToolsWindows.get(e.id) || null;
-    (!t || t.isDestroyed()) && (t = new u({
-      width: Math.max(960, Math.floor(this.config.window.width * 0.6)),
-      height: Math.max(720, Math.floor(this.config.window.height * 0.6)),
-      title: "DevTools",
-      autoHideMenuBar: !0
-    }), t.on("closed", () => {
-      this.devToolsWindows.delete(e.id), !e.isDestroyed() && e.isDevToolsOpened() && e.closeDevTools();
-    }), this.devToolsWindows.set(e.id, t));
+    let devToolsWindow = this.devToolsWindows.get(target.id) || null;
+    if (!devToolsWindow || devToolsWindow.isDestroyed()) {
+      devToolsWindow = new BrowserWindow({
+        width: Math.max(960, Math.floor(this.config.window.width * 0.6)),
+        height: Math.max(720, Math.floor(this.config.window.height * 0.6)),
+        title: "DevTools",
+        autoHideMenuBar: true
+      });
+      devToolsWindow.on("closed", () => {
+        this.devToolsWindows.delete(target.id);
+        if (!target.isDestroyed() && target.isDevToolsOpened()) {
+          target.closeDevTools();
+        }
+      });
+      this.devToolsWindows.set(target.id, devToolsWindow);
+    }
     try {
-      e.setDevToolsWebContents(t.webContents);
-    } catch (i) {
-      console.warn("[WindowManager] Failed to attach detached devtools window", i), t && !t.isDestroyed() && t.close(), this.devToolsWindows.delete(e.id), e.openDevTools({ mode: "undocked", activate: !0 });
+      target.setDevToolsWebContents(devToolsWindow.webContents);
+    } catch (err) {
+      console.warn("[WindowManager] Failed to attach detached devtools window", err);
+      if (devToolsWindow && !devToolsWindow.isDestroyed()) {
+        devToolsWindow.close();
+      }
+      this.devToolsWindows.delete(target.id);
+      target.openDevTools({ mode: "undocked", activate: true });
       return;
     }
-    const s = () => {
-      e.removeListener("devtools-closed", s), e.removeListener("destroyed", s);
-      const i = this.devToolsWindows.get(e.id);
-      i && !i.isDestroyed() && i.close(), this.devToolsWindows.delete(e.id);
+    const cleanup = () => {
+      target.removeListener("devtools-closed", cleanup);
+      target.removeListener("destroyed", cleanup);
+      const win = this.devToolsWindows.get(target.id);
+      if (win && !win.isDestroyed()) {
+        win.close();
+      }
+      this.devToolsWindows.delete(target.id);
     };
-    e.once("devtools-closed", s), e.once("destroyed", s), e.isDevToolsOpened() || e.openDevTools({ mode: "detach", activate: !0 }), t.show(), t.focus();
-  }
-  async ensureAppProtocol() {
-    if (this.appProtocolRegistered) return;
-    if (!T.registerBufferProtocol("app", (t, s) => {
-      const i = (n, o, h) => {
-        const c = this.createRendererHeaders(h);
-        s({
-          statusCode: n,
-          headers: c,
-          data: o,
-          mimeType: h ? this.getMimeType(h) : void 0
-        });
-      };
-      this.readRendererAsset(t.url).then(({ data: n, filePath: o }) => {
-        i(200, n, o);
-      }).catch((n) => {
-        console.warn("[WindowManager] Failed to load asset for app protocol", n), i(404, Buffer.from("Not Found", "utf8"));
-      });
-    }))
-      throw new Error("Failed to register app:// protocol handler");
-    this.appProtocolRegistered = !0;
-  }
-  async readRendererAsset(e) {
-    const t = new URL(e);
-    let s = decodeURIComponent(t.pathname);
-    !s || s === "/" ? s = "index.html" : s = s.replace(/^\/+/, "");
-    let i = d.resolve(this.rendererDist, s);
-    if (!i.startsWith(this.rendererDist + d.sep) && i !== this.rendererDist)
-      throw new Error("Attempted to access file outside renderer dist");
-    try {
-      return { data: await b.readFile(i), filePath: i };
-    } catch (n) {
-      if (!d.extname(i))
-        return i = d.resolve(this.rendererDist, "index.html"), { data: await b.readFile(i), filePath: i };
-      throw n;
+    target.once("devtools-closed", cleanup);
+    target.once("destroyed", cleanup);
+    if (!target.isDevToolsOpened()) {
+      target.openDevTools({ mode: "detach", activate: true });
     }
-  }
-  createRendererHeaders(e) {
-    const t = {
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp"
-    };
-    return e && (t["Content-Type"] = this.getMimeType(e)), t;
-  }
-  getMimeType(e) {
-    switch (d.extname(e).toLowerCase()) {
-      case ".html":
-        return "text/html";
-      case ".js":
-      case ".mjs":
-        return "text/javascript";
-      case ".cjs":
-        return "application/javascript";
-      case ".css":
-        return "text/css";
-      case ".json":
-        return "application/json";
-      case ".svg":
-        return "image/svg+xml";
-      case ".png":
-        return "image/png";
-      case ".jpg":
-      case ".jpeg":
-        return "image/jpeg";
-      case ".gif":
-        return "image/gif";
-      case ".webp":
-        return "image/webp";
-      case ".ico":
-        return "image/x-icon";
-      case ".woff":
-        return "font/woff";
-      case ".woff2":
-        return "font/woff2";
-      case ".txt":
-        return "text/plain";
-      default:
-        return "application/octet-stream";
-    }
+    devToolsWindow.show();
+    devToolsWindow.focus();
   }
 }
-class F {
+class ViewManager {
   views = /* @__PURE__ */ new Map();
   config;
   mainWindow = null;
-  isDev = !!process.env.VITE_DEV_SERVER_URL;
+  isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
   devToolsListeners = [];
   devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 };
-  constructor(e) {
-    this.config = e;
+  constructor(config) {
+    this.config = config;
   }
-  setMainWindow(e) {
-    this.mainWindow = e, this.setupResizeHandler(), this.setupDevToolsHandlers();
+  setMainWindow(window) {
+    this.mainWindow = window;
+    this.setupResizeHandler();
+    this.setupDevToolsHandlers();
   }
   setupResizeHandler() {
-    this.mainWindow && this.mainWindow.on("resize", () => {
+    if (!this.mainWindow) return;
+    this.mainWindow.on("resize", () => {
       this.updateBounds();
     });
   }
   setupDevToolsHandlers() {
     if (!this.mainWindow) return;
-    const e = () => {
+    const update = () => {
       this.updateBounds();
-    }, t = this.mainWindow.webContents, s = () => {
-      this.clearDevToolsListeners(), this.updateDevToolsInsets(), e();
-      const i = t.devToolsWebContents;
-      if (i) {
-        const n = () => {
-          this.updateDevToolsInsets(), this.updateBounds();
-        }, o = (h, c) => {
-          this.updateDevToolsInsets(), this.updateBounds();
+    };
+    const webContents = this.mainWindow.webContents;
+    const handleOpened = () => {
+      this.clearDevToolsListeners();
+      this.updateDevToolsInsets();
+      update();
+      const devToolsContents = webContents.devToolsWebContents;
+      if (devToolsContents) {
+        const handleDevToolsResize = () => {
+          this.updateDevToolsInsets();
+          this.updateBounds();
         };
-        i.on("destroyed", n), i.on("did-finish-load", n), i.on("did-stop-loading", n), i.on("dom-ready", n), i.on("preferred-size-changed", o), this.devToolsListeners.push(() => {
-          i.removeListener("destroyed", n), i.removeListener("did-finish-load", n), i.removeListener("did-stop-loading", n), i.removeListener("dom-ready", n), i.removeListener("preferred-size-changed", o);
+        const handlePreferredSizeChanged = (_event, _size) => {
+          this.updateDevToolsInsets();
+          this.updateBounds();
+        };
+        devToolsContents.on("destroyed", handleDevToolsResize);
+        devToolsContents.on("did-finish-load", handleDevToolsResize);
+        devToolsContents.on("did-stop-loading", handleDevToolsResize);
+        devToolsContents.on("dom-ready", handleDevToolsResize);
+        devToolsContents.on("preferred-size-changed", handlePreferredSizeChanged);
+        this.devToolsListeners.push(() => {
+          devToolsContents.removeListener("destroyed", handleDevToolsResize);
+          devToolsContents.removeListener("did-finish-load", handleDevToolsResize);
+          devToolsContents.removeListener("did-stop-loading", handleDevToolsResize);
+          devToolsContents.removeListener("dom-ready", handleDevToolsResize);
+          devToolsContents.removeListener("preferred-size-changed", handlePreferredSizeChanged);
         });
       }
     };
-    t.on("devtools-opened", s), t.on("devtools-focused", () => {
-      this.updateDevToolsInsets(), e();
-    }), t.on("devtools-closed", () => {
-      this.clearDevToolsListeners(), this.resetDevToolsInsets(), e();
+    webContents.on("devtools-opened", handleOpened);
+    webContents.on("devtools-focused", () => {
+      this.updateDevToolsInsets();
+      update();
+    });
+    webContents.on("devtools-closed", () => {
+      this.clearDevToolsListeners();
+      this.resetDevToolsInsets();
+      update();
     });
   }
-  createViews(e) {
+  createViews(urls) {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    const t = this.mainWindow.getContentBounds();
-    e.forEach((s, i) => {
-      const n = new A({
+    const bounds = this.mainWindow.getContentBounds();
+    urls.forEach((url, index) => {
+      const view = new BrowserView({
         webPreferences: {
-          nodeIntegration: !1,
-          contextIsolation: !0
+          nodeIntegration: false,
+          contextIsolation: true
         }
       });
-      n.setBackgroundColor("#000000"), i === 0 && this.mainWindow && this.isDev && n.webContents.once("did-finish-load", () => {
-        n.webContents.openDevTools({ mode: "detach", activate: !0 });
-      }), this.setBounds(n, t), n.setAutoResize({ width: !0, height: !0 }), n.webContents.loadURL(s), this.views.set(i, n), i === 0 && this.mainWindow && this.mainWindow.addBrowserView(n), this.setupViewEventHandlers(n, i, s);
+      view.setBackgroundColor("#000000");
+      if (index === 0 && this.mainWindow && this.isDev) {
+        view.webContents.once("did-finish-load", () => {
+          view.webContents.openDevTools({ mode: "detach", activate: true });
+        });
+      }
+      this.setBounds(view, bounds);
+      view.setAutoResize({ width: true, height: true });
+      view.webContents.loadURL(url);
+      this.views.set(index, view);
+      if (index === 0 && this.mainWindow) {
+        this.mainWindow.addBrowserView(view);
+      }
+      this.setupViewEventHandlers(view, index, url);
     });
   }
-  setBounds(e, t) {
-    const s = this.calculateViewBounds(t);
-    e.setBounds(s);
+  setBounds(view, windowBounds) {
+    const bounds = this.calculateViewBounds(windowBounds);
+    view.setBounds(bounds);
   }
-  calculateViewBounds(e) {
-    const t = Math.max(
+  calculateViewBounds(windowBounds) {
+    const availableWidth = Math.max(
       0,
-      e.width - this.devToolsInsets.left - this.devToolsInsets.right
-    ), s = Math.max(
+      windowBounds.width - this.devToolsInsets.left - this.devToolsInsets.right
+    );
+    const availableHeight = Math.max(
       0,
-      e.height - this.devToolsInsets.top - this.devToolsInsets.bottom - this.config.window.controlBarHeight
+      windowBounds.height - this.devToolsInsets.top - this.devToolsInsets.bottom - this.config.window.controlBarHeight
     );
     return {
       x: this.devToolsInsets.left,
       y: this.devToolsInsets.top,
-      width: t,
-      height: s
+      width: availableWidth,
+      height: availableHeight
     };
   }
-  setupViewEventHandlers(e, t, s) {
-    e.webContents.on("did-finish-load", () => {
-      console.log(`Setup view ${t} loaded: ${s}`);
-    }), e.webContents.on("did-fail-load", (i, n, o) => {
-      console.error(`Setup view ${t} failed to load: ${o}`);
+  setupViewEventHandlers(view, index, url) {
+    view.webContents.on("did-finish-load", () => {
+      console.log(`Setup view ${index} loaded: ${url}`);
+    });
+    view.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+      console.error(`Setup view ${index} failed to load: ${errorDescription}`);
     });
   }
   updateBounds() {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.updateDevToolsInsets();
-    const e = this.mainWindow.getContentBounds();
-    this.views.forEach((t) => {
-      this.setBounds(t, e);
+    const bounds = this.mainWindow.getContentBounds();
+    this.views.forEach((view) => {
+      this.setBounds(view, bounds);
     });
   }
-  showView(e) {
+  showView(index) {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    this.views.forEach((s) => {
-      this.mainWindow.removeBrowserView(s);
+    this.views.forEach((view2) => {
+      this.mainWindow.removeBrowserView(view2);
     });
-    const t = this.views.get(e);
-    t && (this.mainWindow.addBrowserView(t), this.updateBounds(), this.isDev && (t.webContents.isDevToolsOpened() ? t.webContents.devToolsWebContents?.focus?.() : t.webContents.openDevTools({ mode: "detach", activate: !0 })));
+    const view = this.views.get(index);
+    if (view) {
+      this.mainWindow.addBrowserView(view);
+      this.updateBounds();
+      if (this.isDev) {
+        if (view.webContents.isDevToolsOpened()) {
+          view.webContents.devToolsWebContents?.focus?.();
+        } else {
+          view.webContents.openDevTools({ mode: "detach", activate: true });
+        }
+      }
+    }
   }
   cleanup() {
-    this.clearDevToolsListeners(), this.views.forEach((e) => {
-      this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.removeBrowserView(e), e.webContents.destroy();
-    }), this.views.clear();
+    this.clearDevToolsListeners();
+    this.views.forEach((view) => {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.removeBrowserView(view);
+      }
+      view.webContents.destroy();
+    });
+    this.views.clear();
   }
   getViews() {
     return this.views;
   }
   clearDevToolsListeners() {
-    this.devToolsListeners.forEach((e) => e()), this.devToolsListeners.length = 0, this.resetDevToolsInsets();
+    this.devToolsListeners.forEach((remove) => remove());
+    this.devToolsListeners.length = 0;
+    this.resetDevToolsInsets();
   }
   resetDevToolsInsets() {
     this.devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -332,45 +349,66 @@ class F {
       this.resetDevToolsInsets();
       return;
     }
-    const e = this.mainWindow.webContents;
-    if (!e.isDevToolsOpened?.()) {
+    const webContents = this.mainWindow.webContents;
+    if (!webContents.isDevToolsOpened?.()) {
       this.resetDevToolsInsets();
       return;
     }
-    const t = e.devToolsWebContents;
-    if (!t) {
+    const devToolsContents = webContents.devToolsWebContents;
+    if (!devToolsContents) {
       this.resetDevToolsInsets();
       return;
     }
-    const s = t?.getOwnerBrowserWindow?.() ?? null;
-    if (!s) {
+    const ownerWindow = devToolsContents?.getOwnerBrowserWindow?.() ?? null;
+    if (!ownerWindow) {
       this.resetDevToolsInsets();
       return;
     }
-    const i = this.mainWindow.getBounds(), n = s.getBounds(), o = 2, h = Math.abs(n.width - i.width) <= o, c = Math.abs(n.height - i.height) <= o, l = { top: 0, right: 0, bottom: 0, left: 0 };
-    if (h && n.height < i.height) {
-      const a = Math.abs(n.y - i.y);
-      Math.abs(
-        i.y + i.height - (n.y + n.height)
-      ) <= a ? l.bottom = n.height : l.top = n.height;
-    } else if (c && n.width < i.width) {
-      const a = Math.abs(n.x - i.x);
-      Math.abs(
-        i.x + i.width - (n.x + n.width)
-      ) <= a ? l.right = n.width : l.left = n.width;
+    const windowBounds = this.mainWindow.getBounds();
+    const devToolsBounds = ownerWindow.getBounds();
+    const tolerance = 2;
+    const matchesWidth = Math.abs(devToolsBounds.width - windowBounds.width) <= tolerance;
+    const matchesHeight = Math.abs(devToolsBounds.height - windowBounds.height) <= tolerance;
+    const insets = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (matchesWidth && devToolsBounds.height < windowBounds.height) {
+      const distanceTop = Math.abs(devToolsBounds.y - windowBounds.y);
+      const distanceBottom = Math.abs(
+        windowBounds.y + windowBounds.height - (devToolsBounds.y + devToolsBounds.height)
+      );
+      if (distanceBottom <= distanceTop) {
+        insets.bottom = devToolsBounds.height;
+      } else {
+        insets.top = devToolsBounds.height;
+      }
+    } else if (matchesHeight && devToolsBounds.width < windowBounds.width) {
+      const distanceLeft = Math.abs(devToolsBounds.x - windowBounds.x);
+      const distanceRight = Math.abs(
+        windowBounds.x + windowBounds.width - (devToolsBounds.x + devToolsBounds.width)
+      );
+      if (distanceRight <= distanceLeft) {
+        insets.right = devToolsBounds.width;
+      } else {
+        insets.left = devToolsBounds.width;
+      }
     } else {
-      const a = t.getPreferredSize?.();
-      a && (a.height && a.height < i.height ? l.bottom = a.height : a.width && a.width < i.width && (l.right = a.width));
+      const preferredSize = devToolsContents.getPreferredSize?.();
+      if (preferredSize) {
+        if (preferredSize.height && preferredSize.height < windowBounds.height) {
+          insets.bottom = preferredSize.height;
+        } else if (preferredSize.width && preferredSize.width < windowBounds.width) {
+          insets.right = preferredSize.width;
+        }
+      }
     }
     this.devToolsInsets = {
-      top: Math.max(0, l.top),
-      right: Math.max(0, l.right),
-      bottom: Math.max(0, l.bottom),
-      left: Math.max(0, l.left)
+      top: Math.max(0, insets.top),
+      right: Math.max(0, insets.right),
+      bottom: Math.max(0, insets.bottom),
+      left: Math.max(0, insets.left)
     };
   }
 }
-class P {
+class OffscreenRenderer {
   windows = /* @__PURE__ */ new Map();
   config;
   windowManager;
@@ -391,304 +429,364 @@ class P {
   initialAckTimeouts = /* @__PURE__ */ new Map();
   // How long to wait for an initial-frame ACK before sending a fallback (ms)
   initialAckTimeoutMs = 4e3;
-  constructor(e, t) {
-    this.config = e, this.windowManager = t;
+  constructor(config, windowManager2) {
+    this.config = config;
+    this.windowManager = windowManager2;
   }
   // Called by IPC handler when renderer confirms it applied the initial frame
-  handleInitialAck(e) {
-    this.acknowledgedFirstFrame.set(e, !0), this.waitingForAck.delete(e), console.info(`[OffscreenRenderer] received initial-frame ACK for ${e}`);
-    const t = this.initialAckTimeouts.get(e);
-    t && (clearTimeout(t), this.initialAckTimeouts.delete(e)), this.pendingFrames.has(e) && this.scheduleFrameSend(e, !0);
+  handleInitialAck(index) {
+    this.acknowledgedFirstFrame.set(index, true);
+    this.waitingForAck.delete(index);
+    console.info(`[OffscreenRenderer] received initial-frame ACK for ${index}`);
+    const t = this.initialAckTimeouts.get(index);
+    if (t) {
+      clearTimeout(t);
+      this.initialAckTimeouts.delete(index);
+    }
   }
-  createOffscreenWindows(e) {
-    e.forEach((t, s) => {
-      const i = new u({
+  createOffscreenWindows(urls) {
+    urls.forEach((url, index) => {
+      const offscreenWin = new BrowserWindow({
         width: this.config.window.width,
         height: this.config.window.height,
-        show: !1,
+        show: false,
         webPreferences: {
-          offscreen: !0,
-          nodeIntegration: !1,
-          contextIsolation: !0
+          offscreen: true,
+          nodeIntegration: false,
+          contextIsolation: true
         }
       });
-      i.loadURL(t), this.windows.set(s, i), this.setupPaintHandler(i, s), this.setupLoadHandlers(i, s, t), s === 0 && this.enablePainting(s);
-    });
-  }
-  setupPaintHandler(e, t) {
-    e.webContents.on("paint", (s, i, n) => {
-      if (!this.paintingEnabled.has(t)) return;
-      const o = n.toBitmap(), h = n.getSize();
-      try {
-        this.pendingFrames.set(t, { buffer: Buffer.from(o), size: h }), this.scheduleFrameSend(t, !0);
-      } catch (c) {
-        console.error("[OffscreenRenderer] Failed to forward paint frame", { index: t, err: c });
+      offscreenWin.loadURL(url);
+      this.windows.set(index, offscreenWin);
+      this.setupPaintHandler(offscreenWin, index);
+      this.setupLoadHandlers(offscreenWin, index, url);
+      if (index === 0) {
+        this.enablePainting(index);
       }
     });
   }
-  ensureSharedBuffer(e, t) {
-    const s = this.sharedBuffers.get(e);
-    if (s && s.byteLength === t)
-      return s;
-    const i = new SharedArrayBuffer(t);
-    return this.sharedBuffers.set(e, i), i;
-  }
-  writeFrameToSharedBuffer(e, t) {
-    const s = Math.max(1, t.size.width) * Math.max(1, t.size.height) * 4, i = this.ensureSharedBuffer(e, s), n = new Uint8Array(i), o = t.buffer.subarray(0, Math.min(t.buffer.length, n.length));
-    return n.set(o), o.length < n.length && n.fill(0, o.length), i;
-  }
-  sendFrame(e, t, s) {
-    if (typeof SharedArrayBuffer == "function")
+  setupPaintHandler(window, index) {
+    window.webContents.on("paint", (event, dirty, image) => {
+      if (!this.paintingEnabled.has(index)) return;
+      const bitmap = image.toBitmap();
+      const size = image.getSize();
       try {
-        const n = this.writeFrameToSharedBuffer(e, t);
-        return this.windowManager.postMessageToRenderer("webview-frame", {
-          index: e,
-          buffer: n,
-          size: t.size,
-          format: "sabs",
-          byteLength: n.byteLength,
-          timestamp: Date.now()
-        }), s || this.pendingFrames.delete(e), !0;
-      } catch (n) {
-        console.warn("[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back", {
-          index: e,
-          err: n
-        });
-      }
-    try {
-      const n = t.buffer.buffer.slice(
-        t.buffer.byteOffset,
-        t.buffer.byteOffset + t.buffer.byteLength
-      );
-      return this.windowManager.postMessageToRenderer(
-        "webview-frame",
-        { index: e, buffer: n, size: t.size, format: "raw" },
-        [n]
-      ), s || this.pendingFrames.delete(e), !0;
-    } catch (n) {
-      console.error("[OffscreenRenderer] failed to send frame payload", { index: e, err: n });
-    }
-    return !1;
-  }
-  scheduleFrameSend(e, t) {
-    if (!this.pendingFrames.get(e)) return;
-    const i = this.sendTimers.get(e);
-    if (i && (clearTimeout(i), this.sendTimers.delete(e)), t) {
-      this.dispatchFrame(e);
-      return;
-    }
-    const n = this.config.rendering.frameRate || 30, o = Math.max(0, Math.floor(1e3 / n)), h = setTimeout(() => {
-      this.sendTimers.delete(e), this.dispatchFrame(e);
-    }, o);
-    this.sendTimers.set(e, h);
-  }
-  dispatchFrame(e) {
-    const t = this.pendingFrames.get(e);
-    if (!t) return;
-    const s = !!this.acknowledgedFirstFrame.get(e), i = !!this.waitingForAck.get(e);
-    if (!s) {
-      if (i)
-        return;
-      this.sendFrame(e, t, !0) && (this.waitingForAck.set(e, !0), this.lastSentAt.set(e, Date.now()), console.info(`[OffscreenRenderer] sent initial frame for ${e}, awaiting ACK`), this.startInitialAckTimeout(e));
-      return;
-    }
-    const n = this.config.rendering.frameRate || 30, o = Math.max(0, Math.floor(1e3 / n)), h = this.lastSentAt.get(e) || 0, c = Date.now(), l = c - h;
-    if (l < o) {
-      const a = o - l, v = setTimeout(() => {
-        this.sendTimers.delete(e), this.dispatchFrame(e);
-      }, a);
-      this.sendTimers.set(e, v);
-      return;
-    }
-    this.sendFrame(e, t, !1) && this.lastSentAt.set(e, c);
-  }
-  startInitialAckTimeout(e) {
-    try {
-      const t = this.initialAckTimeouts.get(e);
-      t && clearTimeout(t);
-      const s = setTimeout(() => {
-        if (this.waitingForAck.get(e)) {
-          console.warn(
-            `[OffscreenRenderer] initial-frame ACK timeout for ${e}, sending fallback frame`
-          ), this.waitingForAck.delete(e), this.acknowledgedFirstFrame.set(e, !0);
-          try {
-            const n = { buffer: Buffer.from([255, 255, 255, 255]), size: { width: 1, height: 1 } };
-            this.sendFrame(e, n, !0), this.windowManager.sendToRenderer("webview-load-timeout", { index: e });
-          } catch (i) {
-            console.error("[OffscreenRenderer] failed to send fallback frame after timeout", i);
-          }
-          this.pendingFrames.has(e) && this.scheduleFrameSend(e, !0);
+        const buf = Buffer.from(bitmap);
+        const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+        this.pendingFrames.set(index, { buffer: ab, size });
+        const existingTimer = this.sendTimers.get(index);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
         }
-        this.initialAckTimeouts.delete(e);
-      }, this.initialAckTimeoutMs);
-      this.initialAckTimeouts.set(e, s);
-    } catch (t) {
-      console.warn("[OffscreenRenderer] failed to schedule initial ACK timeout", t);
-    }
-  }
-  setupLoadHandlers(e, t, s) {
-    e.webContents.on("did-finish-load", () => {
-      console.log(`Offscreen window ${t} loaded: ${s}`), this.windowManager.sendToRenderer("webview-loaded", { index: t, url: s });
-    }), e.webContents.on("did-fail-load", (i, n, o) => {
-      console.error(`Offscreen window ${t} failed to load: ${o}`);
+        const attemptSend = () => {
+          const pending = this.pendingFrames.get(index);
+          if (!pending) return;
+          const hasAck = !!this.acknowledgedFirstFrame.get(index);
+          const waiting = !!this.waitingForAck.get(index);
+          if (!hasAck) {
+            if (waiting) {
+              return;
+            }
+            try {
+              this.waitingForAck.set(index, true);
+              this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: pending.buffer, size: pending.size, format: "raw" }, [pending.buffer]);
+              this.lastSentAt.set(index, Date.now());
+              console.info(`[OffscreenRenderer] sent initial frame (ArrayBuffer) for ${index}, awaiting ACK`);
+              try {
+                const t = setTimeout(() => {
+                  if (this.waitingForAck.get(index)) {
+                    console.warn(`[OffscreenRenderer] initial-frame ACK timeout for ${index}, sending fallback frame`);
+                    this.waitingForAck.delete(index);
+                    this.acknowledgedFirstFrame.set(index, true);
+                    try {
+                      const fallback = new Uint8ClampedArray([255, 255, 255, 255]);
+                      const fallbackAb = fallback.buffer.slice(0);
+                      this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: fallbackAb, size: { width: 1, height: 1 }, format: "raw" }, [fallbackAb]);
+                      this.windowManager.sendToRenderer("webview-load-timeout", { index });
+                    } catch (err) {
+                      console.error("[OffscreenRenderer] failed to send fallback frame after timeout", err);
+                    }
+                  }
+                  this.initialAckTimeouts.delete(index);
+                }, this.initialAckTimeoutMs);
+                this.initialAckTimeouts.set(index, t);
+              } catch (err) {
+                console.warn("[OffscreenRenderer] failed to schedule initial ACK timeout", err);
+              }
+            } catch (err) {
+              console.warn("[OffscreenRenderer] failed to post initial ArrayBuffer frame, falling back to send", err);
+              try {
+                this.windowManager.sendToRenderer("webview-frame", { index, buffer: Buffer.from(pending.buffer), size: pending.size, format: "raw" });
+              } catch (e) {
+                console.error("[OffscreenRenderer] fallback send also failed", e);
+              }
+            }
+            return;
+          }
+          const frameRate = this.config.rendering.frameRate || 30;
+          const minInterval = Math.max(0, Math.floor(1e3 / frameRate));
+          const last = this.lastSentAt.get(index) || 0;
+          const now = Date.now();
+          const elapsed = now - last;
+          if (elapsed < minInterval) {
+            const delay = minInterval - elapsed;
+            const t = setTimeout(attemptSend, delay);
+            this.sendTimers.set(index, t);
+            return;
+          }
+          try {
+            const nextAb = pending.buffer.slice(0);
+            this.windowManager.postMessageToRenderer("webview-frame", { index, buffer: nextAb, size: pending.size, format: "raw" }, [nextAb]);
+            this.lastSentAt.set(index, now);
+            this.pendingFrames.delete(index);
+          } catch (err) {
+            console.warn("[OffscreenRenderer] failed to post ArrayBuffer frame, falling back to send", err);
+            try {
+              this.windowManager.sendToRenderer("webview-frame", { index, buffer: Buffer.from(pending.buffer), size: pending.size, format: "raw" });
+              this.lastSentAt.set(index, now);
+              this.pendingFrames.delete(index);
+            } catch (e) {
+              console.error("[OffscreenRenderer] fallback send also failed", e);
+            }
+          }
+        };
+        attemptSend();
+      } catch (err) {
+        console.error("[OffscreenRenderer] Failed to forward paint frame", { index, err });
+      }
     });
   }
-  enablePainting(e) {
-    const t = this.windows.get(e);
-    if (t && !t.isDestroyed() && !this.paintingEnabled.has(e)) {
-      this.paintingEnabled.add(e);
+  setupLoadHandlers(window, index, url) {
+    window.webContents.on("did-finish-load", () => {
+      console.log(`Offscreen window ${index} loaded: ${url}`);
+      this.windowManager.sendToRenderer("webview-loaded", { index, url });
+    });
+    window.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+      console.error(`Offscreen window ${index} failed to load: ${errorDescription}`);
+    });
+  }
+  enablePainting(index) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed() && !this.paintingEnabled.has(index)) {
+      this.paintingEnabled.add(index);
       try {
-        t.webContents.setFrameRate(this.config.rendering.frameRate);
-      } catch (s) {
-        console.warn("[OffscreenRenderer] setFrameRate failed on enable", { index: e, err: s });
+        window.webContents.setFrameRate(this.config.rendering.frameRate);
+      } catch (err) {
+        console.warn("[OffscreenRenderer] setFrameRate failed on enable", { index, err });
       }
       setTimeout(() => {
-        console.log(`Enabled painting for window ${e}`);
+        console.log(`Enabled painting for window ${index}`);
       }, 60);
     }
   }
-  disablePainting(e) {
-    const t = this.windows.get(e);
-    t && !t.isDestroyed() && this.paintingEnabled.has(e) && (this.paintingEnabled.delete(e), t.webContents.setFrameRate(0), console.log(`Disabled painting for window ${e}`));
+  disablePainting(index) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed() && this.paintingEnabled.has(index)) {
+      this.paintingEnabled.delete(index);
+      window.webContents.setFrameRate(0);
+      console.log(`Disabled painting for window ${index}`);
+    }
   }
-  setActivePaintingWindows(e) {
-    this.windows.forEach((t, s) => {
-      e.includes(s) || this.disablePainting(s);
-    }), e.forEach((t) => {
-      this.enablePainting(t);
+  setActivePaintingWindows(indices) {
+    this.windows.forEach((_, index) => {
+      if (!indices.includes(index)) {
+        this.disablePainting(index);
+      }
+    });
+    indices.forEach((index) => {
+      this.enablePainting(index);
     });
   }
-  reload(e) {
-    const t = this.windows.get(e);
-    t && !t.isDestroyed() && t.webContents.reload();
+  reload(index) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed()) {
+      window.webContents.reload();
+    }
   }
   /**
    * Resize a specific offscreen window. Width/height should be in device
    * pixels (DIP). This triggers a repaint at the new size which will be
    * emitted via the 'paint' event.
    */
-  resize(e, t, s) {
-    const i = this.windows.get(e);
-    i && !i.isDestroyed() && (console.info(`[OffscreenRenderer] resize window ${e} -> ${t}x${s}`), i.setSize(t, s));
+  resize(index, width, height) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed()) {
+      console.info(`[OffscreenRenderer] resize window ${index} -> ${width}x${height}`);
+      window.setSize(width, height);
+    }
   }
   /** Resize all offscreen windows to the provided dimensions. */
-  resizeAll(e, t) {
-    this.windows.forEach((s) => {
-      s.isDestroyed() || (console.info(`[OffscreenRenderer] resizeAll -> ${e}x${t}`), s.setSize(e, t));
+  resizeAll(width, height) {
+    this.windows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        console.info(`[OffscreenRenderer] resizeAll -> ${width}x${height}`);
+        win.setSize(width, height);
+      }
     });
   }
   /** Resize only the provided indices. */
-  resizeIndices(e, t, s) {
-    e.forEach((i) => {
-      const n = this.windows.get(i);
-      n && !n.isDestroyed() && (console.info(`[OffscreenRenderer] resizeIndices - window ${i} -> ${t}x${s}`), n.setSize(t, s));
+  resizeIndices(indices, width, height) {
+    indices.forEach((i) => {
+      const win = this.windows.get(i);
+      if (win && !win.isDestroyed()) {
+        console.info(`[OffscreenRenderer] resizeIndices - window ${i} -> ${width}x${height}`);
+        win.setSize(width, height);
+      }
     });
   }
-  navigate(e, t) {
-    const s = this.windows.get(e);
-    s && !s.isDestroyed() && s.loadURL(t);
+  navigate(index, url) {
+    const window = this.windows.get(index);
+    if (window && !window.isDestroyed()) {
+      window.loadURL(url);
+    }
   }
   cleanup() {
-    this.windows.forEach((e) => {
-      e.isDestroyed() || e.destroy();
-    }), this.windows.clear(), this.paintingEnabled.clear(), this.sharedBuffers.clear(), this.pendingFrames.clear(), this.acknowledgedFirstFrame.clear(), this.waitingForAck.clear(), this.lastSentAt.clear(), this.sendTimers.forEach((e) => clearTimeout(e)), this.sendTimers.clear(), this.initialAckTimeouts.forEach((e) => clearTimeout(e)), this.initialAckTimeouts.clear();
+    this.windows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.destroy();
+      }
+    });
+    this.windows.clear();
+    this.paintingEnabled.clear();
   }
   getWindows() {
     return this.windows;
   }
 }
-class E {
+class IPCHandlers {
   config;
   viewManager;
   offscreenRenderer;
   windowManager;
   onSetupComplete;
-  constructor(e, t, s, i, n) {
-    this.config = e, this.viewManager = t, this.offscreenRenderer = s, this.windowManager = i, this.onSetupComplete = n;
+  constructor(config, viewManager2, offscreenRenderer2, windowManager2, onSetupComplete) {
+    this.config = config;
+    this.viewManager = viewManager2;
+    this.offscreenRenderer = offscreenRenderer2;
+    this.windowManager = windowManager2;
+    this.onSetupComplete = onSetupComplete;
   }
   register() {
-    r.handle("get-webview-urls", () => this.config.urls), r.handle("show-setup-view", (e, t) => {
-      this.viewManager.showView(t);
-    }), r.handle("finish-setup", () => {
-      this.viewManager.cleanup(), this.offscreenRenderer.createOffscreenWindows(this.config.urls), this.windowManager.sendToRenderer("setup-complete"), this.onSetupComplete();
-    }), r.handle("reload-webview", (e, t) => {
-      this.offscreenRenderer.reload(t);
-    }), r.handle("navigate-webview", (e, t, s) => {
-      this.offscreenRenderer.navigate(t, s);
-    }), r.handle("set-active-painting-windows", (e, t) => {
-      this.offscreenRenderer.setActivePaintingWindows(t);
-    }), r.handle("resize-offscreen-windows", (e, t, s) => {
-      this.offscreenRenderer.resizeAll(t, s);
-    }), r.handle("resize-active-offscreen-windows", (e, t, s, i) => {
-      this.offscreenRenderer.resizeIndices(t, s, i);
-    }), r.handle("enable-painting", (e, t) => {
-      this.offscreenRenderer.enablePainting(t);
-    }), r.handle("disable-painting", (e, t) => {
-      this.offscreenRenderer.disablePainting(t);
-    }), r.on("initial-frame-ack", (e, t) => {
+    ipcMain.handle("get-webview-urls", () => {
+      return this.config.urls;
+    });
+    ipcMain.handle("show-setup-view", (event, index) => {
+      this.viewManager.showView(index);
+    });
+    ipcMain.handle("finish-setup", () => {
+      this.viewManager.cleanup();
+      this.offscreenRenderer.createOffscreenWindows(this.config.urls);
+      this.windowManager.sendToRenderer("setup-complete");
+      this.onSetupComplete();
+    });
+    ipcMain.handle("reload-webview", (event, index) => {
+      this.offscreenRenderer.reload(index);
+    });
+    ipcMain.handle("navigate-webview", (event, index, url) => {
+      this.offscreenRenderer.navigate(index, url);
+    });
+    ipcMain.handle("set-active-painting-windows", (event, indices) => {
+      this.offscreenRenderer.setActivePaintingWindows(indices);
+    });
+    ipcMain.handle("resize-offscreen-windows", (event, width, height) => {
+      this.offscreenRenderer.resizeAll(width, height);
+    });
+    ipcMain.handle("resize-active-offscreen-windows", (event, indices, width, height) => {
+      this.offscreenRenderer.resizeIndices(indices, width, height);
+    });
+    ipcMain.handle("enable-painting", (event, index) => {
+      this.offscreenRenderer.enablePainting(index);
+    });
+    ipcMain.handle("disable-painting", (event, index) => {
+      this.offscreenRenderer.disablePainting(index);
+    });
+    ipcMain.on("initial-frame-ack", (event, data) => {
       try {
-        const s = t?.index;
-        typeof s == "number" && this.offscreenRenderer.handleInitialAck(s);
-      } catch (s) {
-        console.warn("[IPC] failed handling initial-frame-ack", s);
+        const idx = data?.index;
+        if (typeof idx === "number") {
+          this.offscreenRenderer.handleInitialAck(idx);
+        }
+      } catch (err) {
+        console.warn("[IPC] failed handling initial-frame-ack", err);
       }
-    }), r.on("texture-applied", (e, t) => {
-    }), r.on("frame-stats", (e, t) => {
-    }), r.on("plane-state", (e, t) => {
-    }), r.on("renderer-error", (e, t) => {
+    });
+    ipcMain.on("texture-applied", (event, data) => {
+    });
+    ipcMain.on("frame-stats", (event, data) => {
+    });
+    ipcMain.on("plane-state", (event, data) => {
+    });
+    ipcMain.on("renderer-error", (_event, data) => {
       try {
-        console.error("[IPC] renderer-error", t);
-      } catch (s) {
-        console.warn("[IPC] failed to log renderer-error", s);
+        console.error("[IPC] renderer-error", data);
+      } catch (err) {
+        console.warn("[IPC] failed to log renderer-error", err);
       }
     });
   }
   unregister() {
-    r.removeHandler("get-webview-urls"), r.removeHandler("show-setup-view"), r.removeHandler("finish-setup"), r.removeHandler("reload-webview"), r.removeHandler("navigate-webview"), r.removeHandler("set-active-painting-windows"), r.removeHandler("enable-painting"), r.removeHandler("disable-painting"), r.removeAllListeners("initial-frame-ack"), r.removeAllListeners("texture-applied"), r.removeAllListeners("frame-stats"), r.removeAllListeners("plane-state"), r.removeAllListeners("render-stats"), r.removeAllListeners("renderer-error");
+    ipcMain.removeHandler("get-webview-urls");
+    ipcMain.removeHandler("show-setup-view");
+    ipcMain.removeHandler("finish-setup");
+    ipcMain.removeHandler("reload-webview");
+    ipcMain.removeHandler("navigate-webview");
+    ipcMain.removeHandler("set-active-painting-windows");
+    ipcMain.removeHandler("enable-painting");
+    ipcMain.removeHandler("disable-painting");
+    ipcMain.removeAllListeners("initial-frame-ack");
+    ipcMain.removeAllListeners("texture-applied");
+    ipcMain.removeAllListeners("frame-stats");
+    ipcMain.removeAllListeners("plane-state");
+    ipcMain.removeAllListeners("render-stats");
+    ipcMain.removeAllListeners("renderer-error");
   }
 }
-const D = d.dirname(I(import.meta.url));
-process.env.APP_ROOT = d.join(D, "..");
-T.registerSchemesAsPrivileged([
-  {
-    scheme: "app",
-    privileges: {
-      standard: !0,
-      secure: !0,
-      supportFetchAPI: !0,
-      corsEnabled: !0,
-      stream: !0
-    }
-  }
-]);
-const R = process.env.VITE_DEV_SERVER_URL, z = d.join(process.env.APP_ROOT, "dist-electron"), y = d.join(process.env.APP_ROOT, "dist");
-process.env.VITE_PUBLIC = R ? d.join(process.env.APP_ROOT, "public") : y;
-const m = new B(
-  f,
-  R,
-  y,
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+process.env.APP_ROOT = path.join(__dirname, "..");
+const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
+const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
+const windowManager = new WindowManager(
+  defaultConfig,
+  VITE_DEV_SERVER_URL,
+  RENDERER_DIST,
   process.env.VITE_PUBLIC || ""
-), g = new F(f), C = new P(f, m), M = new E(
-  f,
-  g,
-  C,
-  m,
+);
+const viewManager = new ViewManager(defaultConfig);
+const offscreenRenderer = new OffscreenRenderer(defaultConfig, windowManager);
+const ipcHandlers = new IPCHandlers(
+  defaultConfig,
+  viewManager,
+  offscreenRenderer,
+  windowManager,
   () => {
   }
 );
-function W() {
-  const w = d.join(D, "preload.js"), e = m.createWindow(w);
-  g.setMainWindow(e), g.createViews(f.urls), M.register();
+function initialize() {
+  const preloadPath = path.join(__dirname, "preload.js");
+  const mainWindow = windowManager.createWindow(preloadPath);
+  viewManager.setMainWindow(mainWindow);
+  viewManager.createViews(defaultConfig.urls);
+  ipcHandlers.register();
 }
-p.on("window-all-closed", () => {
-  process.platform !== "darwin" && (C.cleanup(), g.cleanup(), M.unregister(), m.destroy(), p.quit());
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    offscreenRenderer.cleanup();
+    viewManager.cleanup();
+    ipcHandlers.unregister();
+    windowManager.destroy();
+    app.quit();
+  }
 });
-p.on("activate", () => {
-  u.getAllWindows().length === 0 && W();
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    initialize();
+  }
 });
-p.whenReady().then(W);
+app.whenReady().then(initialize);
 export {
-  z as MAIN_DIST,
-  y as RENDERER_DIST,
-  R as VITE_DEV_SERVER_URL
+  MAIN_DIST,
+  RENDERER_DIST,
+  VITE_DEV_SERVER_URL
 };
