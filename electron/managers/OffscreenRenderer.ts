@@ -16,7 +16,10 @@ export class OffscreenRenderer {
   // Track last send timestamp per index (ms)
   private readonly lastSentAt: Map<number, number> = new Map()
   // Pending frame per index (coalesce rapid paint events)
-  private readonly pendingFrames: Map<number, { buffer: ArrayBuffer; size: { width: number; height: number } }> = new Map()
+  private readonly pendingFrames: Map<
+    number,
+    { buffer: Buffer; size: { width: number; height: number } }
+  > = new Map()
   // Per-index send timers to schedule next allowed send
   private readonly sendTimers: Map<number, NodeJS.Timeout> = new Map()
   // Initial ACK timeouts per index
@@ -39,6 +42,11 @@ export class OffscreenRenderer {
     if (t) {
       clearTimeout(t)
       this.initialAckTimeouts.delete(index)
+    }
+
+    if (this.pendingFrames.has(index)) {
+      // Flush any pending frame that accumulated while waiting for the ACK
+      this.scheduleFrameSend(index, true)
     }
   }
 
@@ -81,119 +89,205 @@ export class OffscreenRenderer {
       // Debug logs: include index, reported size, and bitmap byte length so
       // we can diagnose DPR/backing-store mismatches and GPU copy errors.
       try {
-        const buf = Buffer.from(bitmap)
-
         // Coalesce: store latest frame as pending and schedule a send that
         // respects the configured frameRate. This prevents flooding the
         // renderer/IPC with every paint event which can starve texture
         // application.
-        const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-        this.pendingFrames.set(index, { buffer: ab, size })
+        this.pendingFrames.set(index, { buffer: Buffer.from(bitmap), size })
 
-        // Clear any existing timer; we'll reschedule based on rate-limiting
-        const existingTimer = this.sendTimers.get(index)
-        if (existingTimer) {
-          clearTimeout(existingTimer)
-        }
-
-        const attemptSend = () => {
-          const pending = this.pendingFrames.get(index)
-          if (!pending) return
-
-          const hasAck = !!this.acknowledgedFirstFrame.get(index)
-          const waiting = !!this.waitingForAck.get(index)
-
-          // Send initial frame only once and wait for ACK
-          if (!hasAck) {
-            if (waiting) {
-              // Already waiting for the renderer's ACK; keep pending and exit
-              return
-            }
-
-            try {
-              this.waitingForAck.set(index, true)
-              this.windowManager.postMessageToRenderer('webview-frame', { index, buffer: pending.buffer, size: pending.size, format: 'raw' }, [pending.buffer])
-              this.lastSentAt.set(index, Date.now())
-              console.info(`[OffscreenRenderer] sent initial frame (ArrayBuffer) for ${index}, awaiting ACK`)
-              // Start a timeout: if we don't get an initial-frame ACK within
-              // initialAckTimeoutMs, send a tiny fallback frame so renderer can
-              // proceed (avoids stalling UI) and mark as acknowledged.
-              try {
-                const t = setTimeout(() => {
-                  if (this.waitingForAck.get(index)) {
-                    console.warn(`[OffscreenRenderer] initial-frame ACK timeout for ${index}, sending fallback frame`)
-                    this.waitingForAck.delete(index)
-                    this.acknowledgedFirstFrame.set(index, true)
-                    try {
-                      const fallback = new Uint8ClampedArray([255, 255, 255, 255])
-                      const fallbackAb = fallback.buffer.slice(0)
-                      this.windowManager.postMessageToRenderer('webview-frame', { index, buffer: fallbackAb, size: { width: 1, height: 1 }, format: 'raw' }, [fallbackAb])
-                      this.windowManager.sendToRenderer('webview-load-timeout', { index })
-                    } catch (err) {
-                      console.error('[OffscreenRenderer] failed to send fallback frame after timeout', err)
-                    }
-                  }
-                  this.initialAckTimeouts.delete(index)
-                }, this.initialAckTimeoutMs)
-
-                this.initialAckTimeouts.set(index, t)
-              } catch (err) {
-                console.warn('[OffscreenRenderer] failed to schedule initial ACK timeout', err)
-              }
-            } catch (err) {
-              console.warn('[OffscreenRenderer] failed to post initial ArrayBuffer frame, falling back to send', err)
-              try {
-                this.windowManager.sendToRenderer('webview-frame', { index, buffer: Buffer.from(pending.buffer), size: pending.size, format: 'raw' })
-              } catch (e) {
-                console.error('[OffscreenRenderer] fallback send also failed', e)
-              }
-            }
-
-            // Keep pending until ACK arrives
-            return
-          }
-
-          // After initial ack, enforce framerate throttling
-          const frameRate = this.config.rendering.frameRate || 30
-          const minInterval = Math.max(0, Math.floor(1000 / frameRate))
-          const last = this.lastSentAt.get(index) || 0
-          const now = Date.now()
-          const elapsed = now - last
-
-          if (elapsed < minInterval) {
-            // schedule for remaining time
-            const delay = minInterval - elapsed
-            const t = setTimeout(attemptSend, delay)
-            this.sendTimers.set(index, t)
-            return
-          }
-
-          // Send the most recent pending frame
-          try {
-            // Slice into a fresh ArrayBuffer to transfer ownership
-            const nextAb = pending.buffer.slice(0)
-            this.windowManager.postMessageToRenderer('webview-frame', { index, buffer: nextAb, size: pending.size, format: 'raw' }, [nextAb])
-            this.lastSentAt.set(index, now)
-            // Clear pending; next paint will set it again
-            this.pendingFrames.delete(index)
-          } catch (err) {
-            console.warn('[OffscreenRenderer] failed to post ArrayBuffer frame, falling back to send', err)
-            try {
-              this.windowManager.sendToRenderer('webview-frame', { index, buffer: Buffer.from(pending.buffer), size: pending.size, format: 'raw' })
-              this.lastSentAt.set(index, now)
-              this.pendingFrames.delete(index)
-            } catch (e) {
-              console.error('[OffscreenRenderer] fallback send also failed', e)
-            }
-          }
-        }
-
-        // Immediately attempt send (it will either send or schedule itself)
-        attemptSend()
+        this.scheduleFrameSend(index, true)
       } catch (err) {
         console.error('[OffscreenRenderer] Failed to forward paint frame', { index, err })
       }
     })
+  }
+
+  private ensureSharedBuffer(index: number, byteLength: number): SharedArrayBuffer {
+    const existing = this.sharedBuffers.get(index)
+    if (existing && existing.byteLength === byteLength) {
+      return existing
+    }
+
+    const sab = new SharedArrayBuffer(byteLength)
+    this.sharedBuffers.set(index, sab)
+    return sab
+  }
+
+  private writeFrameToSharedBuffer(
+    index: number,
+    frame: { buffer: Buffer; size: { width: number; height: number } },
+  ): SharedArrayBuffer {
+    const expectedBytes = Math.max(1, frame.size.width) * Math.max(1, frame.size.height) * 4
+    const target = this.ensureSharedBuffer(index, expectedBytes)
+    const view = new Uint8Array(target)
+    const source = frame.buffer.subarray(0, Math.min(frame.buffer.length, view.length))
+    view.set(source)
+
+    if (source.length < view.length) {
+      view.fill(0, source.length)
+    }
+
+    return target
+  }
+
+  private sendFrame(
+    index: number,
+    frame: { buffer: Buffer; size: { width: number; height: number } },
+    keepPending: boolean,
+  ): boolean {
+    const supportsSAB = typeof SharedArrayBuffer === 'function'
+
+    if (supportsSAB) {
+      try {
+        const shared = this.writeFrameToSharedBuffer(index, frame)
+        this.windowManager.postMessageToRenderer('webview-frame', {
+          index,
+          buffer: shared,
+          size: frame.size,
+          format: 'sabs',
+          byteLength: shared.byteLength,
+          timestamp: Date.now(),
+        })
+
+        if (!keepPending) {
+          this.pendingFrames.delete(index)
+        }
+
+        return true
+      } catch (err) {
+        console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
+          index,
+          err,
+        })
+      }
+    }
+
+    try {
+      const ab = frame.buffer.buffer.slice(
+        frame.buffer.byteOffset,
+        frame.buffer.byteOffset + frame.buffer.byteLength,
+      )
+      this.windowManager.postMessageToRenderer(
+        'webview-frame',
+        { index, buffer: ab, size: frame.size, format: 'raw' },
+        [ab],
+      )
+      if (!keepPending) {
+        this.pendingFrames.delete(index)
+      }
+      return true
+    } catch (err) {
+      console.error('[OffscreenRenderer] failed to send frame payload', { index, err })
+    }
+
+    return false
+  }
+
+  private scheduleFrameSend(index: number, immediate: boolean): void {
+    const pending = this.pendingFrames.get(index)
+    if (!pending) return
+
+    const existingTimer = this.sendTimers.get(index)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+      this.sendTimers.delete(index)
+    }
+
+    if (immediate) {
+      this.dispatchFrame(index)
+      return
+    }
+
+    const frameRate = this.config.rendering.frameRate || 30
+    const minInterval = Math.max(0, Math.floor(1000 / frameRate))
+
+    const timer = setTimeout(() => {
+      this.sendTimers.delete(index)
+      this.dispatchFrame(index)
+    }, minInterval)
+
+    this.sendTimers.set(index, timer)
+  }
+
+  private dispatchFrame(index: number): void {
+    const pending = this.pendingFrames.get(index)
+    if (!pending) return
+
+    const hasAck = !!this.acknowledgedFirstFrame.get(index)
+    const waiting = !!this.waitingForAck.get(index)
+
+    if (!hasAck) {
+      if (waiting) {
+        return
+      }
+
+      const sent = this.sendFrame(index, pending, true)
+      if (sent) {
+        this.waitingForAck.set(index, true)
+        this.lastSentAt.set(index, Date.now())
+        console.info(`[OffscreenRenderer] sent initial frame for ${index}, awaiting ACK`)
+        this.startInitialAckTimeout(index)
+      }
+      return
+    }
+
+    const frameRate = this.config.rendering.frameRate || 30
+    const minInterval = Math.max(0, Math.floor(1000 / frameRate))
+    const last = this.lastSentAt.get(index) || 0
+    const now = Date.now()
+    const elapsed = now - last
+
+    if (elapsed < minInterval) {
+      const delay = minInterval - elapsed
+      const timer = setTimeout(() => {
+        this.sendTimers.delete(index)
+        this.dispatchFrame(index)
+      }, delay)
+      this.sendTimers.set(index, timer)
+      return
+    }
+
+    if (this.sendFrame(index, pending, false)) {
+      this.lastSentAt.set(index, now)
+    }
+  }
+
+  private startInitialAckTimeout(index: number): void {
+    try {
+      const existing = this.initialAckTimeouts.get(index)
+      if (existing) {
+        clearTimeout(existing)
+      }
+
+      const timer = setTimeout(() => {
+        if (this.waitingForAck.get(index)) {
+          console.warn(
+            `[OffscreenRenderer] initial-frame ACK timeout for ${index}, sending fallback frame`,
+          )
+          this.waitingForAck.delete(index)
+          this.acknowledgedFirstFrame.set(index, true)
+
+          try {
+            const fallback = Buffer.from([255, 255, 255, 255])
+            const frame = { buffer: fallback, size: { width: 1, height: 1 } }
+            this.sendFrame(index, frame, true)
+            this.windowManager.sendToRenderer('webview-load-timeout', { index })
+          } catch (err) {
+            console.error('[OffscreenRenderer] failed to send fallback frame after timeout', err)
+          }
+
+          if (this.pendingFrames.has(index)) {
+            this.scheduleFrameSend(index, true)
+          }
+        }
+
+        this.initialAckTimeouts.delete(index)
+      }, this.initialAckTimeoutMs)
+
+      this.initialAckTimeouts.set(index, timer)
+    } catch (err) {
+      console.warn('[OffscreenRenderer] failed to schedule initial ACK timeout', err)
+    }
   }
 
   private setupLoadHandlers(window: BrowserWindow, index: number, url: string): void {
@@ -310,6 +404,17 @@ export class OffscreenRenderer {
     })
     this.windows.clear()
     this.paintingEnabled.clear()
+    this.sharedBuffers.clear()
+    this.pendingFrames.clear()
+    this.acknowledgedFirstFrame.clear()
+    this.waitingForAck.clear()
+    this.lastSentAt.clear()
+
+    this.sendTimers.forEach((timer) => clearTimeout(timer))
+    this.sendTimers.clear()
+
+    this.initialAckTimeouts.forEach((timer) => clearTimeout(timer))
+    this.initialAckTimeouts.clear()
   }
 
   getWindows(): Map<number, BrowserWindow> {

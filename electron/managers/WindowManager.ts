@@ -43,7 +43,13 @@ export class WindowManager {
     // session so postMessage with SABs can be serialized into the page.
     try {
       const ses = this.window.webContents.session
-      ses.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (details, callback) => {
+      ses.webRequest.onHeadersReceived({ urls: ['*://*/*', 'file://*'] }, (details, callback) => {
+        const targetId = this.window?.webContents.id
+        if (!targetId || details.webContentsId !== targetId) {
+          callback({ responseHeaders: details.responseHeaders })
+          return
+        }
+
         const responseHeaders = Object.assign({}, details.responseHeaders || {})
         // Add COOP and COEP to enable SharedArrayBuffer usage in renderer
         responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin']
