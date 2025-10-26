@@ -1,9 +1,6 @@
-import {
-  contextBridge,
-  ipcRenderer,
-  type IpcRenderer,
-  type IpcRendererEvent,
-} from 'electron'
+import type { IpcRenderer, IpcRendererEvent } from 'electron'
+
+const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron')
 
 type SerializableConsoleArg =
   | string

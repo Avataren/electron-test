@@ -1,9 +1,10 @@
-const { ipcRenderer, contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 const handlers = /* @__PURE__ */ new Map();
 const forwardRendererError = (payload) => {
   try {
     ipcRenderer.send("renderer-error", payload);
   } catch (err) {
+    console.debug("[preload] Failed to forward renderer error", err);
   }
 };
 const serializeArg = (arg) => {
@@ -14,7 +15,7 @@ const serializeArg = (arg) => {
       stack: arg.stack
     };
   }
-  if (typeof arg === "object") {
+  if (typeof arg === "object" && arg !== null) {
     try {
       return JSON.stringify(arg);
     } catch (_err) {
@@ -23,20 +24,30 @@ const serializeArg = (arg) => {
   }
   return String(arg);
 };
-contextBridge.exposeInMainWorld("ipcRenderer", {
+const exposedIpcRenderer = {
   on(channel, listener) {
     console.log("[preload] Registering handler for:", channel);
     if (!handlers.has(channel)) handlers.set(channel, /* @__PURE__ */ new Set());
     handlers.get(channel).add(listener);
-    return ipcRenderer.on(channel, (e, ...args) => listener(e, ...args));
+    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args));
   },
   off(channel, listener) {
-    if (listener && handlers.has(channel)) handlers.get(channel).delete(listener);
-    return ipcRenderer.off(channel, listener || void 0);
+    if (listener) {
+      handlers.get(channel)?.delete(listener);
+      return ipcRenderer.off(channel, listener);
+    }
+    handlers.get(channel)?.clear();
+    ipcRenderer.removeAllListeners(channel);
+    return ipcRenderer;
   },
-  send: (channel, ...args) => ipcRenderer.send(channel, ...args),
-  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args)
-});
+  send(channel, ...args) {
+    ipcRenderer.send(channel, ...args);
+  },
+  invoke(channel, ...args) {
+    return ipcRenderer.invoke(channel, ...args);
+  }
+};
+contextBridge.exposeInMainWorld("ipcRenderer", exposedIpcRenderer);
 window.addEventListener("error", (event) => {
   forwardRendererError({
     type: "error",
@@ -49,10 +60,11 @@ window.addEventListener("error", (event) => {
 });
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason;
+  const stack = typeof reason === "object" && reason !== null ? reason.stack ?? null : null;
   forwardRendererError({
     type: "unhandledrejection",
-    message: reason && reason.message || (typeof reason === "string" ? reason : void 0) || "Unhandled promise rejection",
-    stack: reason && reason.stack ? reason.stack : null
+    message: typeof reason === "object" && reason?.message || (typeof reason === "string" ? reason : void 0) || "Unhandled promise rejection",
+    stack
   });
 });
 const originalConsoleError = console.error.bind(console);
@@ -69,8 +81,15 @@ window.addEventListener("message", (ev) => {
   if (!data) return;
   const channel = data.channel || "webview-frame";
   const msg = data.message ?? data;
-  console.log("[preload] Forwarding to channel:", channel, "handlers:", handlers.has(channel) ? handlers.get(channel).size : 0);
-  const h = handlers.get(channel);
-  if (h) h.forEach((fn) => fn(null, msg));
+  console.log(
+    "[preload] Forwarding to channel:",
+    channel,
+    "handlers:",
+    handlers.has(channel) ? handlers.get(channel).size : 0
+  );
+  const registered = handlers.get(channel);
+  if (registered) {
+    registered.forEach((fn) => fn({}, msg));
+  }
 });
 console.log("[preload] Initialized");

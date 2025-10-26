@@ -359,7 +359,7 @@ class ViewManager {
       this.resetDevToolsInsets();
       return;
     }
-    const ownerWindow = devToolsContents.getOwnerBrowserWindow?.();
+    const ownerWindow = devToolsContents?.getOwnerBrowserWindow?.() ?? null;
     if (!ownerWindow) {
       this.resetDevToolsInsets();
       return;
