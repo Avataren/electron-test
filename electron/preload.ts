@@ -1,16 +1,51 @@
-const { ipcRenderer, contextBridge } = require('electron')
+import {
+  contextBridge,
+  ipcRenderer,
+  type IpcRenderer,
+  type IpcRendererEvent,
+} from 'electron'
 
-const handlers = new Map()
+type SerializableConsoleArg =
+  | string
+  | {
+      name: string
+      message: string
+      stack?: string
+    }
 
-const forwardRendererError = (payload) => {
+type RendererErrorPayload =
+  | {
+      type: 'error'
+      message: string
+      source: string
+      lineno: number
+      colno: number
+      stack: string | null
+    }
+  | {
+      type: 'unhandledrejection'
+      message: string
+      stack: string | null
+    }
+  | {
+      type: 'console-error'
+      arguments: SerializableConsoleArg[]
+    }
+
+type IpcRendererListener = (event: IpcRendererEvent, ...args: unknown[]) => void
+
+const handlers = new Map<string, Set<IpcRendererListener>>()
+
+const forwardRendererError = (payload: RendererErrorPayload) => {
   try {
     ipcRenderer.send('renderer-error', payload)
   } catch (err) {
     // Intentionally swallow errors to avoid recursive failure loops.
+    console.debug('[preload] Failed to forward renderer error', err)
   }
 }
 
-const serializeArg = (arg) => {
+const serializeArg = (arg: unknown): SerializableConsoleArg => {
   if (arg instanceof Error) {
     return {
       name: arg.name,
@@ -19,7 +54,7 @@ const serializeArg = (arg) => {
     }
   }
 
-  if (typeof arg === 'object') {
+  if (typeof arg === 'object' && arg !== null) {
     try {
       return JSON.stringify(arg)
     } catch (_err) {
@@ -30,20 +65,35 @@ const serializeArg = (arg) => {
   return String(arg)
 }
 
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(channel, listener) {
+const exposedIpcRenderer: Pick<
+  IpcRenderer,
+  'on' | 'off' | 'send' | 'invoke'
+> = {
+  on(channel: string, listener: IpcRendererListener) {
     console.log('[preload] Registering handler for:', channel)
     if (!handlers.has(channel)) handlers.set(channel, new Set())
-    handlers.get(channel).add(listener)
-    return ipcRenderer.on(channel, (e, ...args) => listener(e, ...args))
+    handlers.get(channel)!.add(listener)
+    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
   },
-  off(channel, listener) {
-    if (listener && handlers.has(channel)) handlers.get(channel).delete(listener)
-    return ipcRenderer.off(channel, listener || undefined)
+  off(channel: string, listener?: IpcRendererListener) {
+    if (listener) {
+      handlers.get(channel)?.delete(listener)
+      return ipcRenderer.off(channel, listener)
+    }
+
+    handlers.get(channel)?.clear()
+    ipcRenderer.removeAllListeners(channel)
+    return ipcRenderer
   },
-  send: (channel, ...args) => ipcRenderer.send(channel, ...args),
-  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
-})
+  send(channel: string, ...args: unknown[]) {
+    ipcRenderer.send(channel, ...args)
+  },
+  invoke(channel: string, ...args: unknown[]) {
+    return ipcRenderer.invoke(channel, ...args)
+  },
+}
+
+contextBridge.exposeInMainWorld('ipcRenderer', exposedIpcRenderer)
 
 window.addEventListener('error', (event) => {
   forwardRendererError({
@@ -57,19 +107,23 @@ window.addEventListener('error', (event) => {
 })
 
 window.addEventListener('unhandledrejection', (event) => {
-  const reason = event.reason
+  const reason = event.reason as { message?: string; stack?: string } | string | undefined
+  const stack =
+    typeof reason === 'object' && reason !== null
+      ? reason.stack ?? null
+      : null
   forwardRendererError({
     type: 'unhandledrejection',
     message:
-      (reason && reason.message) ||
+      (typeof reason === 'object' && reason?.message) ||
       (typeof reason === 'string' ? reason : undefined) ||
       'Unhandled promise rejection',
-    stack: reason && reason.stack ? reason.stack : null,
+    stack,
   })
 })
 
 const originalConsoleError = console.error.bind(console)
-console.error = (...args) => {
+console.error = (...args: unknown[]) => {
   forwardRendererError({
     type: 'console-error',
     arguments: args.map(serializeArg),
@@ -77,15 +131,22 @@ console.error = (...args) => {
   originalConsoleError(...args)
 }
 
-window.addEventListener('message', (ev) => {
+window.addEventListener('message', (ev: MessageEvent<{ channel?: string; message?: unknown } | undefined>) => {
   console.log('[preload] Received message event:', ev.data ? 'has data' : 'no data')
   const data = ev.data
   if (!data) return
   const channel = data.channel || 'webview-frame'
   const msg = data.message ?? data
-  console.log('[preload] Forwarding to channel:', channel, 'handlers:', handlers.has(channel) ? handlers.get(channel).size : 0)
-  const h = handlers.get(channel)
-  if (h) h.forEach(fn => fn(null, msg))
+  console.log(
+    '[preload] Forwarding to channel:',
+    channel,
+    'handlers:',
+    handlers.has(channel) ? handlers.get(channel)!.size : 0,
+  )
+  const registered = handlers.get(channel)
+  if (registered) {
+    registered.forEach((fn) => fn({} as IpcRendererEvent, msg))
+  }
 })
 
 console.log('[preload] Initialized')

@@ -6,7 +6,7 @@ import * as THREE from 'three'
 interface WebviewFrame {
   index: number
   buffer: ArrayBuffer | SharedArrayBuffer | Uint8Array
-  size: { width: number; height: number }
+  size?: { width: number; height: number }
 }
 
 // Shape reported to onTextureUpdate: include both logical (css) and backing sizes
@@ -61,7 +61,7 @@ export function useWebviewFrames(
     const stride = Math.max(1, Math.floor(srcArr.length / 4096))
 
     for (let i = 0; i < srcArr.length; i += stride) {
-      const val = srcArr[i]
+      const val: number = srcArr[i] ?? 0
       if (val < min) min = val
       if (val > max) max = val
       sampleSum += val
@@ -122,14 +122,19 @@ export function useWebviewFrames(
   const applyFrameToTexture = (data: IncomingFrame): boolean => {
     const { index, buffer, size, format } = data as any
 
-    let texture = textures[index]
-    if (!texture) {
+    const existingTexture = textures[index]
+    if (!existingTexture) {
       console.warn(`[useWebviewFrames] ⚠️ Texture ${index} not ready; queuing incoming frame`)
       return false
     }
 
-    const ensureCanvasTexture = (currentTexture: THREE.Texture, canvas: HTMLCanvasElement): THREE.Texture => {
-      let targetTexture = currentTexture as THREE.Texture | undefined
+    let texture: THREE.Texture = existingTexture
+
+    const ensureCanvasTexture = (
+      currentTexture: THREE.Texture | undefined,
+      canvas: HTMLCanvasElement,
+    ): THREE.Texture => {
+      let targetTexture = currentTexture
       const isPlaceholder = Boolean((targetTexture as any)?.userData?.isPlaceholder)
       const needsRebuild =
         !targetTexture ||
@@ -157,18 +162,18 @@ export function useWebviewFrames(
         rebuilt.userData.isPlaceholder = false
 
         textures[index] = rebuilt
-        targetTexture = rebuilt
-      } else {
-        if (targetTexture.image !== canvas) {
-          targetTexture.image = canvas as any
-        }
-        targetTexture.minFilter = THREE.NearestFilter
-        targetTexture.magFilter = THREE.NearestFilter
-        targetTexture.generateMipmaps = false
-        targetTexture.colorSpace = THREE.LinearSRGBColorSpace
-        targetTexture.userData = targetTexture.userData || {}
-        targetTexture.userData.isPlaceholder = false
+        return rebuilt
       }
+
+      if (targetTexture.image !== canvas) {
+        targetTexture.image = canvas as any
+      }
+      targetTexture.minFilter = THREE.NearestFilter
+      targetTexture.magFilter = THREE.NearestFilter
+      targetTexture.generateMipmaps = false
+      targetTexture.colorSpace = THREE.LinearSRGBColorSpace
+      targetTexture.userData = targetTexture.userData || {}
+      targetTexture.userData.isPlaceholder = false
 
       return targetTexture
     }
@@ -287,7 +292,7 @@ export function useWebviewFrames(
           canvas.height = pageHeight
         }
 
-        texture = ensureCanvasTexture(texture, canvas) as THREE.Texture
+        texture = ensureCanvasTexture(texture, canvas)
 
         const ctx = canvas.getContext('2d')
 
@@ -300,13 +305,17 @@ export function useWebviewFrames(
         const out = new Uint8ClampedArray(pixelCount * 4)
 
         // Convert BGRA -> RGBA
+        // NOTE: The mesh material stays transparent so transition fades keep working, but
+        // offscreen frames can occasionally ship with zeroed alpha. We coerce the texture
+        // alpha channel to fully opaque so the slideshow never renders as black just because
+        // the buffer arrived with premultiplied transparency.
         //console.log(`[useWebviewFrames] 🔄 Converting BGRA to RGBA for ${index}...`)
         for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
           const bi = i * 4
           const b = srcArr[bi + 0] ?? 0
           const g = srcArr[bi + 1] ?? 0
           const r = srcArr[bi + 2] ?? 0
-          const a = srcArr[bi + 3] ?? 255
+          const a = 255
           out[j] = r
           out[j + 1] = g
           out[j + 2] = b
@@ -432,7 +441,7 @@ export function useWebviewFrames(
         let pageWidth = size?.width || img.naturalWidth || img.width
         let pageHeight = size?.height || img.naturalHeight || img.height
 
-        let localTexture = textures[index] || texture
+        let localTexture: THREE.Texture = textures[index] ?? texture
         let canvas = localTexture?.image as HTMLCanvasElement | undefined
         if (!canvas) {
           canvas = document.createElement('canvas')
@@ -441,7 +450,7 @@ export function useWebviewFrames(
           canvas.width = pageWidth
           canvas.height = pageHeight
         }
-        localTexture = ensureCanvasTexture(localTexture, canvas) as THREE.Texture
+        localTexture = ensureCanvasTexture(localTexture, canvas)
         texture = localTexture
 
         const ctx = canvas.getContext('2d')
