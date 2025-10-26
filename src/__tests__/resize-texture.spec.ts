@@ -132,5 +132,6 @@ describe('useWebviewFrames resize handling', () => {
     expect((textures[0] as any)?.minFilter).toBe(THREE.NearestFilter)
     expect((textures[0] as any)?.magFilter).toBe(THREE.NearestFilter)
     expect((textures[0] as any)?.generateMipmaps).toBe(false)
+    expect((textures[0] as any)?.flipY).toBe(true)
   })
 })

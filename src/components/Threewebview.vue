@@ -24,7 +24,7 @@ let transitionManager: TransitionManager | null = null
 const win: any = window
 let renderStatCounter = 0
 
-const transitionsEnabled = false
+const transitionsEnabled = true
 
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
@@ -219,6 +219,7 @@ const createPlanes = () => {
     texture.magFilter = THREE.NearestFilter
     texture.generateMipmaps = false
     texture.colorSpace = THREE.SRGBColorSpace
+    texture.flipY = true
     texture.needsUpdate = true
     texture.userData.isPlaceholder = true
     textures.push(texture)

@@ -156,6 +156,7 @@ export function useWebviewFrames(
       rebuilt.magFilter = THREE.NearestFilter
       rebuilt.generateMipmaps = false
       rebuilt.colorSpace = THREE.SRGBColorSpace
+      rebuilt.flipY = true
       rebuilt.needsUpdate = false
       rebuilt.userData = rebuilt.userData || {}
       rebuilt.userData.isPlaceholder = false
@@ -175,6 +176,7 @@ export function useWebviewFrames(
     target.magFilter = THREE.NearestFilter
     target.generateMipmaps = false
     target.colorSpace = THREE.SRGBColorSpace
+    target.flipY = true
     target.userData = target.userData || {}
     target.userData.isPlaceholder = false
 
