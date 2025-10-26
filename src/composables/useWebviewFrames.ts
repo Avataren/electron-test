@@ -209,7 +209,8 @@ export function useWebviewFrames(
   ) => {
     if (!_win.__debugFrames) return
     try {
-      const clamped = new Uint8ClampedArray(rgbaBuffer.buffer.slice(0))
+      const clamped = new Uint8ClampedArray(rgbaBuffer.length)
+      clamped.set(rgbaBuffer)
       const imageData = new ImageData(clamped, width, height)
 
       let preview = document.getElementById(`debug-frame-${index}`) as HTMLCanvasElement | null
