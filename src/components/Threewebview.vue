@@ -24,6 +24,8 @@ let transitionManager: TransitionManager | null = null
 const win: any = window
 let renderStatCounter = 0
 
+const transitionsEnabled = false
+
 const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
   useThreeScene(canvasRef)
 
@@ -237,7 +239,9 @@ const createPlanes = () => {
     scene.value?.add(plane)
   })
 
-  transitionManager = new TransitionManager(scene.value, textures, planeConfig)
+  transitionManager = transitionsEnabled
+    ? new TransitionManager(scene.value, textures, planeConfig)
+    : null
 }
 
 // const validateTextureSize = (width: number, height: number, maxSize: number) => {
@@ -460,12 +464,17 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   targetPlane.visible = true
 
   // Start the visual transition effect
-  if (transitionManager) {
+  if (transitionsEnabled && transitionManager) {
     transitionManager.startTransition(type, fromIndex, fromPlane.position)
   }
 
   // Hide the old plane
   fromPlane.visible = false
+
+  if (!transitionsEnabled) {
+    store.setTransitioning(false)
+    return
+  }
 
   // Wait for the visual transition to complete.
   // Previously we used a fixed 2.5s timeout which could desync with the
@@ -518,7 +527,9 @@ const rotateWebview = () => {
   console.log(`Rotate: current=${store.currentIndex}, next=${nextIndex}, type=${nextType}`)
 
   transition(nextIndex, nextType)
-  store.toggleTransitionType()
+  if (transitionsEnabled) {
+    store.toggleTransitionType()
+  }
 }
 
 const refreshWebviews = async () => {
@@ -570,7 +581,9 @@ const handleDotClick = (index: number) => {
 
   const nextType = transitionManager?.getNextType() || 'rain'
   transition(index, nextType)
-  store.toggleTransitionType()
+  if (transitionsEnabled) {
+    store.toggleTransitionType()
+  }
 }
 
 onMounted(async () => {
@@ -697,7 +710,7 @@ onUnmounted(() => {
     </div>
 
     <div
-      v-if="store.isTransitioning && !store.setupMode && allTexturesLoaded"
+      v-if="transitionsEnabled && store.isTransitioning && !store.setupMode && allTexturesLoaded"
       class="transition-indicator"
     >
       Transition {{ store.currentTransitionType === 'rain' ? '1: Rain' : '2: Slices' }}

@@ -27,16 +27,34 @@ const serializeArg = (arg) => {
 const exposedIpcRenderer = {
   on(channel, listener) {
     console.log("[preload] Registering handler for:", channel);
-    if (!handlers.has(channel)) handlers.set(channel, /* @__PURE__ */ new Set());
-    handlers.get(channel).add(listener);
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args));
+    if (!handlers.has(channel)) handlers.set(channel, /* @__PURE__ */ new Map());
+    const channelHandlers = handlers.get(channel);
+    const existingWrapper = channelHandlers.get(listener);
+    if (existingWrapper) {
+      ipcRenderer.off(channel, existingWrapper);
+    }
+    const wrapper = (event, ...args) => listener(event, ...args);
+    channelHandlers.set(listener, wrapper);
+    return ipcRenderer.on(channel, wrapper);
   },
   off(channel, listener) {
     if (listener) {
-      handlers.get(channel)?.delete(listener);
-      return ipcRenderer.off(channel, listener);
+      const channelHandlers2 = handlers.get(channel);
+      const wrapper = channelHandlers2?.get(listener);
+      if (channelHandlers2) {
+        channelHandlers2.delete(listener);
+        if (channelHandlers2.size === 0) handlers.delete(channel);
+      }
+      if (wrapper) {
+        return ipcRenderer.off(channel, wrapper);
+      }
+      return ipcRenderer;
     }
-    handlers.get(channel)?.clear();
+    const channelHandlers = handlers.get(channel);
+    if (channelHandlers) {
+      channelHandlers.clear();
+      handlers.delete(channel);
+    }
     ipcRenderer.removeAllListeners(channel);
     return ipcRenderer;
   },
@@ -89,7 +107,7 @@ window.addEventListener("message", (ev) => {
   );
   const registered = handlers.get(channel);
   if (registered) {
-    registered.forEach((fn) => fn({}, msg));
+    registered.forEach((_wrapper, originalListener) => originalListener({}, msg));
   }
 });
 console.log("[preload] Initialized");

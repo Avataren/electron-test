@@ -31,7 +31,7 @@ type RendererErrorPayload =
 
 type IpcRendererListener = (event: IpcRendererEvent, ...args: unknown[]) => void
 
-const handlers = new Map<string, Set<IpcRendererListener>>()
+const handlers = new Map<string, Map<IpcRendererListener, IpcRendererListener>>()
 
 const forwardRendererError = (payload: RendererErrorPayload) => {
   try {
@@ -68,17 +68,35 @@ const exposedIpcRenderer: Pick<
 > = {
   on(channel: string, listener: IpcRendererListener) {
     console.log('[preload] Registering handler for:', channel)
-    if (!handlers.has(channel)) handlers.set(channel, new Set())
-    handlers.get(channel)!.add(listener)
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
+    if (!handlers.has(channel)) handlers.set(channel, new Map())
+    const channelHandlers = handlers.get(channel)!
+    const existingWrapper = channelHandlers.get(listener)
+    if (existingWrapper) {
+      ipcRenderer.off(channel, existingWrapper)
+    }
+    const wrapper: IpcRendererListener = (event, ...args) => listener(event, ...args)
+    channelHandlers.set(listener, wrapper)
+    return ipcRenderer.on(channel, wrapper)
   },
   off(channel: string, listener?: IpcRendererListener) {
     if (listener) {
-      handlers.get(channel)?.delete(listener)
-      return ipcRenderer.off(channel, listener)
+      const channelHandlers = handlers.get(channel)
+      const wrapper = channelHandlers?.get(listener)
+      if (channelHandlers) {
+        channelHandlers.delete(listener)
+        if (channelHandlers.size === 0) handlers.delete(channel)
+      }
+      if (wrapper) {
+        return ipcRenderer.off(channel, wrapper)
+      }
+      return ipcRenderer
     }
 
-    handlers.get(channel)?.clear()
+    const channelHandlers = handlers.get(channel)
+    if (channelHandlers) {
+      channelHandlers.clear()
+      handlers.delete(channel)
+    }
     ipcRenderer.removeAllListeners(channel)
     return ipcRenderer
   },
@@ -142,7 +160,7 @@ window.addEventListener('message', (ev: MessageEvent<{ channel?: string; message
   )
   const registered = handlers.get(channel)
   if (registered) {
-    registered.forEach((fn) => fn({} as IpcRendererEvent, msg))
+    registered.forEach((_wrapper, originalListener) => originalListener({} as IpcRendererEvent, msg))
   }
 })
 
