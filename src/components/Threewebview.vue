@@ -219,7 +219,8 @@ const createPlanes = () => {
     texture.magFilter = THREE.NearestFilter
     texture.generateMipmaps = false
     texture.colorSpace = THREE.LinearSRGBColorSpace
-    texture.needsUpdate = true
+    texture.needsUpdate = false
+    texture.userData.isPlaceholder = true
     textures.push(texture)
 
     const material = new THREE.MeshBasicMaterial({

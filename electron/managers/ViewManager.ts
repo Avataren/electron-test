@@ -99,7 +99,7 @@ export class ViewManager {
 
       if (index === 0 && this.mainWindow && this.isDev) {
         view.webContents.once('did-finish-load', () => {
-          view.webContents.openDevTools()
+          view.webContents.openDevTools({ mode: 'detach', activate: true })
         })
       }
 
@@ -178,7 +178,7 @@ export class ViewManager {
         if (view.webContents.isDevToolsOpened()) {
           view.webContents.devToolsWebContents?.focus?.()
         } else {
-          view.webContents.openDevTools()
+          view.webContents.openDevTools({ mode: 'detach', activate: true })
         }
       }
     }

@@ -30,6 +30,7 @@ class WindowManager {
   viteDevServerUrl;
   rendererDist;
   publicPath;
+  devToolsWindows = /* @__PURE__ */ new Map();
   constructor(config, viteDevServerUrl, rendererDist, publicPath) {
     this.config = config;
     this.viteDevServerUrl = viteDevServerUrl;
@@ -63,8 +64,15 @@ class WindowManager {
       console.warn("[WindowManager] failed to enable COOP/COEP headers", err);
     }
     if (this.viteDevServerUrl) {
+      this.window.webContents.on("before-input-event", (event, input) => {
+        const isToggle = input.type === "keyDown" && input.key.toLowerCase() === "i" && (input.control || input.meta) && input.shift;
+        if (isToggle) {
+          event.preventDefault();
+          this.openDetachedDevTools(this.window?.webContents);
+        }
+      });
       this.window.webContents.once("did-frame-finish-load", () => {
-        this.window?.webContents.openDevTools();
+        this.openDetachedDevTools(this.window?.webContents);
       });
       this.window.loadURL(this.viteDevServerUrl);
     } else {
@@ -108,6 +116,65 @@ class WindowManager {
       this.window.destroy();
     }
     this.window = null;
+    this.devToolsWindows.forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.close();
+      }
+    });
+    this.devToolsWindows.clear();
+  }
+  openDetachedDevTools(target) {
+    if (!target || target.isDestroyed()) return;
+    if (target.isDevToolsOpened()) {
+      const existing = this.devToolsWindows.get(target.id);
+      if (existing && !existing.isDestroyed()) {
+        existing.focus();
+        return;
+      }
+    }
+    let devToolsWindow = this.devToolsWindows.get(target.id) || null;
+    if (!devToolsWindow || devToolsWindow.isDestroyed()) {
+      devToolsWindow = new BrowserWindow({
+        width: Math.max(960, Math.floor(this.config.window.width * 0.6)),
+        height: Math.max(720, Math.floor(this.config.window.height * 0.6)),
+        title: "DevTools",
+        autoHideMenuBar: true
+      });
+      devToolsWindow.on("closed", () => {
+        this.devToolsWindows.delete(target.id);
+        if (!target.isDestroyed() && target.isDevToolsOpened()) {
+          target.closeDevTools();
+        }
+      });
+      this.devToolsWindows.set(target.id, devToolsWindow);
+    }
+    try {
+      target.setDevToolsWebContents(devToolsWindow.webContents);
+    } catch (err) {
+      console.warn("[WindowManager] Failed to attach detached devtools window", err);
+      if (devToolsWindow && !devToolsWindow.isDestroyed()) {
+        devToolsWindow.close();
+      }
+      this.devToolsWindows.delete(target.id);
+      target.openDevTools({ mode: "undocked", activate: true });
+      return;
+    }
+    const cleanup = () => {
+      target.removeListener("devtools-closed", cleanup);
+      target.removeListener("destroyed", cleanup);
+      const win = this.devToolsWindows.get(target.id);
+      if (win && !win.isDestroyed()) {
+        win.close();
+      }
+      this.devToolsWindows.delete(target.id);
+    };
+    target.once("devtools-closed", cleanup);
+    target.once("destroyed", cleanup);
+    if (!target.isDevToolsOpened()) {
+      target.openDevTools({ mode: "detach", activate: true });
+    }
+    devToolsWindow.show();
+    devToolsWindow.focus();
   }
 }
 class ViewManager {
@@ -189,7 +256,7 @@ class ViewManager {
       view.setBackgroundColor("#000000");
       if (index === 0 && this.mainWindow && this.isDev) {
         view.webContents.once("did-finish-load", () => {
-          view.webContents.openDevTools();
+          view.webContents.openDevTools({ mode: "detach", activate: true });
         });
       }
       this.setBounds(view, bounds);
@@ -251,7 +318,7 @@ class ViewManager {
         if (view.webContents.isDevToolsOpened()) {
           view.webContents.devToolsWebContents?.focus?.();
         } else {
-          view.webContents.openDevTools();
+          view.webContents.openDevTools({ mode: "detach", activate: true });
         }
       }
     }
@@ -644,31 +711,16 @@ class IPCHandlers {
       }
     });
     ipcMain.on("texture-applied", (event, data) => {
-      try {
-        console.log("[IPC] texture-applied from renderer", data);
-      } catch (err) {
-        console.warn("[IPC] failed to log texture-applied", err);
-      }
     });
     ipcMain.on("frame-stats", (event, data) => {
-      try {
-        console.log("[IPC] frame-stats", data);
-      } catch (err) {
-        console.warn("[IPC] failed to log frame-stats", err);
-      }
     });
     ipcMain.on("plane-state", (event, data) => {
-      try {
-        console.log("[IPC] plane-state", data);
-      } catch (err) {
-        console.warn("[IPC] failed to log plane-state", err);
-      }
     });
-    ipcMain.on("render-stats", (event, data) => {
+    ipcMain.on("renderer-error", (_event, data) => {
       try {
-        console.log("[IPC] render-stats", data);
+        console.error("[IPC] renderer-error", data);
       } catch (err) {
-        console.warn("[IPC] failed to log render-stats", err);
+        console.warn("[IPC] failed to log renderer-error", err);
       }
     });
   }
@@ -686,6 +738,7 @@ class IPCHandlers {
     ipcMain.removeAllListeners("frame-stats");
     ipcMain.removeAllListeners("plane-state");
     ipcMain.removeAllListeners("render-stats");
+    ipcMain.removeAllListeners("renderer-error");
   }
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

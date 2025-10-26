@@ -86,7 +86,7 @@ export class IPCHandlers {
     // Diagnostic: listen for renderer acknowledgements that a texture was applied
     ipcMain.on('texture-applied', (event, data) => {
       try {
-        console.log('[IPC] texture-applied from renderer', data)
+        //console.log('[IPC] texture-applied from renderer', data)
       } catch (err) {
         console.warn('[IPC] failed to log texture-applied', err)
       }
@@ -94,7 +94,7 @@ export class IPCHandlers {
 
     ipcMain.on('frame-stats', (event, data) => {
       try {
-        console.log('[IPC] frame-stats', data)
+        //console.log('[IPC] frame-stats', data)
       } catch (err) {
         console.warn('[IPC] failed to log frame-stats', err)
       }
@@ -102,17 +102,25 @@ export class IPCHandlers {
 
     ipcMain.on('plane-state', (event, data) => {
       try {
-        console.log('[IPC] plane-state', data)
+        //console.log('[IPC] plane-state', data)
       } catch (err) {
         console.warn('[IPC] failed to log plane-state', err)
       }
     })
 
-    ipcMain.on('render-stats', (event, data) => {
+    // ipcMain.on('render-stats', (event, data) => {
+    //   try {
+    //     console.log('[IPC] render-stats', data)
+    //   } catch (err) {
+    //     console.warn('[IPC] failed to log render-stats', err)
+    //   }
+    // })
+
+    ipcMain.on('renderer-error', (_event, data) => {
       try {
-        console.log('[IPC] render-stats', data)
+        console.error('[IPC] renderer-error', data)
       } catch (err) {
-        console.warn('[IPC] failed to log render-stats', err)
+        console.warn('[IPC] failed to log renderer-error', err)
       }
     })
   }
@@ -131,5 +139,6 @@ export class IPCHandlers {
     ipcMain.removeAllListeners('frame-stats')
     ipcMain.removeAllListeners('plane-state')
     ipcMain.removeAllListeners('render-stats')
+    ipcMain.removeAllListeners('renderer-error')
   }
 }
