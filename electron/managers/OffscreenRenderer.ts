@@ -26,6 +26,8 @@ export class OffscreenRenderer {
   private readonly initialAckTimeouts: Map<number, NodeJS.Timeout> = new Map()
   // How long to wait for an initial-frame ACK before sending a fallback (ms)
   private readonly initialAckTimeoutMs = 4000
+  // Track whether the main renderer accepted SharedArrayBuffer payloads
+  private rendererSupportsSharedArrayBuffer = true
 
   constructor(config: AppConfig, windowManager: WindowManager) {
     this.config = config
@@ -135,30 +137,46 @@ export class OffscreenRenderer {
     frame: { buffer: Buffer; size: { width: number; height: number } },
     keepPending: boolean,
   ): boolean {
-    const supportsSAB = typeof SharedArrayBuffer === 'function'
+    const supportsSAB =
+      this.rendererSupportsSharedArrayBuffer && typeof SharedArrayBuffer === 'function'
 
     if (supportsSAB) {
       try {
         const shared = this.writeFrameToSharedBuffer(index, frame)
-        this.windowManager.postMessageToRenderer('webview-frame', {
-          index,
-          buffer: shared,
-          size: frame.size,
-          format: 'sabs',
-          byteLength: shared.byteLength,
-          timestamp: Date.now(),
-        })
+        const sent = this.windowManager.postMessageToRenderer(
+          'webview-frame',
+          {
+            index,
+            buffer: shared,
+            size: frame.size,
+            format: 'sabs',
+            byteLength: shared.byteLength,
+            timestamp: Date.now(),
+          },
+          undefined,
+          { fallbackToSend: false },
+        )
 
-        if (!keepPending) {
-          this.pendingFrames.delete(index)
+        if (sent) {
+          if (!keepPending) {
+            this.pendingFrames.delete(index)
+          }
+
+          return true
         }
 
-        return true
+        if (this.rendererSupportsSharedArrayBuffer) {
+          console.warn(
+            '[OffscreenRenderer] renderer rejected SharedArrayBuffer payloads, falling back to ArrayBuffer frames',
+          )
+        }
+        this.rendererSupportsSharedArrayBuffer = false
       } catch (err) {
         console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
           index,
           err,
         })
+        this.rendererSupportsSharedArrayBuffer = false
       }
     }
 
@@ -167,15 +185,17 @@ export class OffscreenRenderer {
         frame.buffer.byteOffset,
         frame.buffer.byteOffset + frame.buffer.byteLength,
       )
-      this.windowManager.postMessageToRenderer(
+      const sent = this.windowManager.postMessageToRenderer(
         'webview-frame',
         { index, buffer: ab, size: frame.size, format: 'raw' },
         [ab],
       )
-      if (!keepPending) {
-        this.pendingFrames.delete(index)
+      if (sent) {
+        if (!keepPending) {
+          this.pendingFrames.delete(index)
+        }
+        return true
       }
-      return true
     } catch (err) {
       console.error('[OffscreenRenderer] failed to send frame payload', { index, err })
     }

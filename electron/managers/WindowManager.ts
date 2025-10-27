@@ -1,4 +1,5 @@
-import { BrowserWindow, type WebContents } from 'electron'
+import { BrowserWindow, protocol, type WebContents } from 'electron'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { AppConfig } from '../config'
 
@@ -9,6 +10,7 @@ export class WindowManager {
   private readonly rendererDist: string
   private readonly publicPath: string
   private readonly devToolsWindows = new Map<number, BrowserWindow>()
+  private appProtocolRegistered = false
 
   constructor(
     config: AppConfig,
@@ -18,7 +20,7 @@ export class WindowManager {
   ) {
     this.config = config
     this.viteDevServerUrl = viteDevServerUrl
-    this.rendererDist = rendererDist
+    this.rendererDist = path.resolve(rendererDist)
     this.publicPath = publicPath
   }
 
@@ -43,7 +45,7 @@ export class WindowManager {
     // session so postMessage with SABs can be serialized into the page.
     try {
       const ses = this.window.webContents.session
-      ses.webRequest.onHeadersReceived({ urls: ['*://*/*', 'file://*'] }, (details, callback) => {
+      ses.webRequest.onHeadersReceived({ urls: ['*://*/*', 'file://*/*', 'app://*/*'] }, (details, callback) => {
         const targetId = this.window?.webContents.id
         if (!targetId || details.webContentsId !== targetId) {
           callback({ responseHeaders: details.responseHeaders })
@@ -54,6 +56,7 @@ export class WindowManager {
         // Add COOP and COEP to enable SharedArrayBuffer usage in renderer
         responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin']
         responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp']
+        responseHeaders['Cross-Origin-Resource-Policy'] = ['same-origin']
         callback({ responseHeaders })
       })
     } catch (err) {
@@ -78,7 +81,18 @@ export class WindowManager {
       })
       this.window.loadURL(this.viteDevServerUrl)
     } else {
-      this.window.loadFile(path.join(this.rendererDist, 'index.html'))
+      this.ensureAppProtocol()
+        .then(() => {
+          if (this.isValid()) {
+            this.window!.loadURL('app://-/index.html')
+          }
+        })
+        .catch((err) => {
+          console.warn('[WindowManager] Failed to register app protocol', err)
+          if (this.isValid()) {
+            this.window!.loadFile(path.join(this.rendererDist, 'index.html'))
+          }
+        })
     }
 
     return this.window
@@ -103,16 +117,39 @@ export class WindowManager {
    * transfer lists (ArrayBuffers, MessagePorts). Use this when sending
    * large binary buffers like SharedArrayBuffer to avoid serialization errors.
    */
-  postMessageToRenderer(channel: string, message: any, transfer?: any[]): void {
-    if (this.isValid()) {
-      try {
-        // webContents.postMessage(channel, message, transfer)
-        this.window!.webContents.postMessage(channel, message, transfer || [])
-      } catch (err) {
-        // Fallback to send which will attempt structured clone (may fail for SAB)
-        this.window!.webContents.send(channel, message)
+  postMessageToRenderer(
+    channel: string,
+    message: any,
+    transfer?: any[],
+    options?: { fallbackToSend?: boolean },
+  ): boolean {
+    if (!this.isValid()) return false
+
+    const fallbackToSend = options?.fallbackToSend ?? true
+
+    try {
+      if (transfer && transfer.length > 0) {
+        this.window!.webContents.postMessage(channel, message, transfer)
+      } else {
+        this.window!.webContents.postMessage(channel, message)
       }
+      return true
+    } catch (err) {
+      console.warn('[WindowManager] postMessage failed', err)
     }
+
+    if (!fallbackToSend) {
+      return false
+    }
+
+    try {
+      this.window!.webContents.send(channel, message)
+      return true
+    } catch (err) {
+      console.error('[WindowManager] send fallback failed', err)
+    }
+
+    return false
   }
 
   getContentBounds() {
@@ -194,5 +231,126 @@ export class WindowManager {
 
     devToolsWindow.show()
     devToolsWindow.focus()
+  }
+
+  private async ensureAppProtocol(): Promise<void> {
+    if (this.appProtocolRegistered) return
+
+    const registered = protocol.registerBufferProtocol('app', (request, callback) => {
+      const finalize = (statusCode: number, data: Buffer, filePath?: string) => {
+        const headers = this.createRendererHeaders(filePath)
+        callback({
+          statusCode,
+          headers,
+          data,
+          mimeType: filePath ? this.getMimeType(filePath) : undefined,
+        })
+      }
+
+      void this.readRendererAsset(request.url)
+        .then(({ data, filePath }) => {
+          finalize(200, data, filePath)
+        })
+        .catch((error) => {
+          console.warn('[WindowManager] Failed to load asset for app protocol', error)
+          finalize(404, Buffer.from('Not Found', 'utf8'))
+        })
+    })
+
+    if (!registered) {
+      throw new Error('Failed to register app:// protocol handler')
+    }
+
+    this.appProtocolRegistered = true
+  }
+
+  private async readRendererAsset(requestUrl: string): Promise<{ data: Buffer; filePath: string }> {
+    const url = new URL(requestUrl)
+    const segments: string[] = []
+
+    const host = url.hostname
+    if (host && host !== '-') {
+      segments.push(host)
+    }
+
+    const rawPath = decodeURIComponent(url.pathname || '')
+    if (rawPath && rawPath !== '/') {
+      segments.push(rawPath.replace(/^\/+/, ''))
+    }
+
+    let relativePath = segments.join('/')
+    if (!relativePath) {
+      relativePath = 'index.html'
+    }
+
+    let resolvedPath = path.resolve(this.rendererDist, relativePath)
+    if (!resolvedPath.startsWith(this.rendererDist + path.sep) && resolvedPath !== this.rendererDist) {
+      throw new Error('Attempted to access file outside renderer dist')
+    }
+
+    try {
+      const data = await fs.readFile(resolvedPath)
+      return { data, filePath: resolvedPath }
+    } catch (error) {
+      const isHtmlRoute = !path.extname(resolvedPath)
+      if (isHtmlRoute) {
+        resolvedPath = path.resolve(this.rendererDist, 'index.html')
+        const data = await fs.readFile(resolvedPath)
+        return { data, filePath: resolvedPath }
+      }
+      throw error
+    }
+  }
+
+  private createRendererHeaders(filePath?: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Resource-Policy': 'same-origin',
+    }
+
+    if (filePath) {
+      headers['Content-Type'] = this.getMimeType(filePath)
+    }
+
+    return headers
+  }
+
+  private getMimeType(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase()
+    switch (ext) {
+      case '.html':
+        return 'text/html'
+      case '.js':
+      case '.mjs':
+        return 'text/javascript'
+      case '.cjs':
+        return 'application/javascript'
+      case '.css':
+        return 'text/css'
+      case '.json':
+        return 'application/json'
+      case '.svg':
+        return 'image/svg+xml'
+      case '.png':
+        return 'image/png'
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg'
+      case '.gif':
+        return 'image/gif'
+      case '.webp':
+        return 'image/webp'
+      case '.ico':
+        return 'image/x-icon'
+      case '.woff':
+        return 'font/woff'
+      case '.woff2':
+        return 'font/woff2'
+      case '.txt':
+        return 'text/plain'
+      default:
+        return 'application/octet-stream'
+    }
   }
 }
