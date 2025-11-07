@@ -140,20 +140,29 @@ export class OffscreenRenderer {
     if (supportsSAB) {
       try {
         const shared = this.writeFrameToSharedBuffer(index, frame)
-        this.windowManager.postMessageToRenderer('webview-frame', {
+        const sabMessage = {
           index,
           buffer: shared,
           size: frame.size,
-          format: 'sabs',
+          format: 'sabs' as const,
           byteLength: shared.byteLength,
           timestamp: Date.now(),
-        })
-
-        if (!keepPending) {
-          this.pendingFrames.delete(index)
         }
 
-        return true
+        const posted = this.windowManager.postMessageToRenderer('webview-frame', sabMessage)
+
+        if (posted) {
+          if (!keepPending) {
+            this.pendingFrames.delete(index)
+          }
+
+          return true
+        }
+
+        console.warn(
+          '[OffscreenRenderer] postMessage rejected SharedArrayBuffer payload, falling back to ArrayBuffer',
+          { index },
+        )
       } catch (err) {
         console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
           index,
@@ -167,11 +176,22 @@ export class OffscreenRenderer {
         frame.buffer.byteOffset,
         frame.buffer.byteOffset + frame.buffer.byteLength,
       )
-      this.windowManager.postMessageToRenderer(
-        'webview-frame',
-        { index, buffer: ab, size: frame.size, format: 'raw' },
-        [ab],
-      )
+      const timestamp = Date.now()
+      const rawMessage = { index, buffer: ab, size: frame.size, format: 'raw' as const, timestamp }
+
+      const posted = this.windowManager.postMessageToRenderer('webview-frame', rawMessage, [ab])
+
+      if (!posted) {
+        const uintView = new Uint8Array(ab)
+        this.windowManager.sendToRenderer('webview-frame', {
+          index,
+          buffer: uintView,
+          size: frame.size,
+          format: 'raw' as const,
+          timestamp,
+        })
+      }
+
       if (!keepPending) {
         this.pendingFrames.delete(index)
       }
