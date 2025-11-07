@@ -27,7 +27,7 @@ export class OffscreenRenderer {
   // Track whether SharedArrayBuffer delivery is blocked so we avoid repeated errors
   private sharedBufferDeliveryBlocked = false
   // Track whether ArrayBuffer transfer lists fail so we fall back to IPC send directly
-  private arrayBufferTransferBlocked = false
+  private arrayBufferPostMessageBlocked = false
 
   constructor(config: AppConfig, windowManager: WindowManager) {
     this.config = config
@@ -111,7 +111,7 @@ export class OffscreenRenderer {
   ): boolean {
     const supportsSAB = typeof SharedArrayBuffer === 'function' && !this.sharedBufferDeliveryBlocked
 
-    if (!this.arrayBufferTransferBlocked) {
+    if (supportsSAB) {
       try {
         const shared = this.writeFrameToSharedBuffer(index, frame)
         const sabMessage = {
@@ -137,6 +137,7 @@ export class OffscreenRenderer {
           '[OffscreenRenderer] postMessage rejected SharedArrayBuffer payload, falling back to ArrayBuffer',
           { index },
         )
+        this.sharedBufferDeliveryBlocked = true
       } catch (err) {
         if (!this.sharedBufferDeliveryBlocked) {
           console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
@@ -156,73 +157,63 @@ export class OffscreenRenderer {
       timestamp,
     }
 
-    if (!this.arrayBufferTransferBlocked) {
+    let ab: ArrayBuffer | null = null
+    try {
+      ab = frame.buffer.buffer.slice(
+        frame.buffer.byteOffset,
+        frame.buffer.byteOffset + frame.buffer.byteLength,
+      )
+    } catch (err) {
+      console.error('[OffscreenRenderer] failed to extract ArrayBuffer from frame buffer', { index, err })
+      ab = null
+    }
+
+    if (!ab) {
+      return false
+    }
+
+    let posted = false
+
+    if (!this.arrayBufferPostMessageBlocked) {
       try {
-        const ab = frame.buffer.buffer.slice(
-          frame.buffer.byteOffset,
-          frame.buffer.byteOffset + frame.buffer.byteLength,
-        )
-        const posted = this.windowManager.postMessageToRenderer(
-          'webview-frame',
-          { ...fallbackPayload, buffer: ab },
-          [ab],
-        )
+        posted = this.windowManager.postMessageToRenderer('webview-frame', {
+          ...fallbackPayload,
+          buffer: ab,
+        })
 
-        if (posted) {
-          if (!keepPending) {
-            this.pendingFrames.delete(index)
-          }
-          return true
-        }
-
-        if (!this.arrayBufferTransferBlocked) {
+        if (!posted && !this.arrayBufferPostMessageBlocked) {
           console.warn(
             '[OffscreenRenderer] postMessage rejected ArrayBuffer payload, falling back to ipc send',
             { index },
           )
-          this.arrayBufferTransferBlocked = true
+          this.arrayBufferPostMessageBlocked = true
         }
       } catch (err) {
-        if (!this.arrayBufferTransferBlocked) {
+        if (!this.arrayBufferPostMessageBlocked) {
           console.warn('[OffscreenRenderer] failed to send ArrayBuffer frame, falling back to ipc send', {
             index,
             err,
           })
-          this.arrayBufferTransferBlocked = true
+          this.arrayBufferPostMessageBlocked = true
         }
       }
     }
 
-    try {
-      const ab = frame.buffer.buffer.slice(
-        frame.buffer.byteOffset,
-        frame.buffer.byteOffset + frame.buffer.byteLength,
-      )
-      const timestamp = Date.now()
-      const rawMessage = { index, buffer: ab, size: frame.size, format: 'raw' as const, timestamp }
-
-      const posted = this.windowManager.postMessageToRenderer('webview-frame', rawMessage, [ab])
-
-      if (!posted) {
-        const uintView = new Uint8Array(ab)
-        this.windowManager.sendToRenderer('webview-frame', {
-          index,
-          buffer: uintView,
-          size: frame.size,
-          format: 'raw' as const,
-          timestamp,
-        })
-      }
-
-      if (!keepPending) {
-        this.pendingFrames.delete(index)
-      }
-      return true
-    } catch (err) {
-      console.error('[OffscreenRenderer] failed to send frame payload', { index, err })
+    if (!posted) {
+      const uintView = new Uint8Array(ab)
+      this.windowManager.sendToRenderer('webview-frame', {
+        index,
+        buffer: uintView,
+        size: frame.size,
+        format: 'raw' as const,
+        timestamp: fallbackPayload.timestamp,
+      })
     }
 
-    return false
+    if (!keepPending) {
+      this.pendingFrames.delete(index)
+    }
+    return true
   }
 
   private scheduleFrameSend(index: number, immediate: boolean): void {
@@ -456,7 +447,7 @@ export class OffscreenRenderer {
 
     this.initialAckTimeouts.forEach((timer) => clearTimeout(timer))
     this.initialAckTimeouts.clear()
-    this.arrayBufferTransferBlocked = false
+    this.arrayBufferPostMessageBlocked = false
   }
 
   getWindows(): Map<number, BrowserWindow> {
