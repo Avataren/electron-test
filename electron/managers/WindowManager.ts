@@ -40,29 +40,6 @@ export class WindowManager {
       this.sendToRenderer('main-process-message', new Date().toLocaleString())
     })
 
-    // Ensure the renderer is cross-origin isolated so it can receive
-    // SharedArrayBuffer objects. Add COOP/COEP headers for the renderer
-    // session so postMessage with SABs can be serialized into the page.
-    try {
-      const ses = this.window.webContents.session
-      ses.webRequest.onHeadersReceived({ urls: ['*://*/*', 'file://*/*', 'app://*/*'] }, (details, callback) => {
-        const targetId = this.window?.webContents.id
-        if (!targetId || details.webContentsId !== targetId) {
-          callback({ responseHeaders: details.responseHeaders })
-          return
-        }
-
-        const responseHeaders = Object.assign({}, details.responseHeaders || {})
-        // Add COOP and COEP to enable SharedArrayBuffer usage in renderer
-        responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin']
-        responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp']
-        responseHeaders['Cross-Origin-Resource-Policy'] = ['same-origin']
-        callback({ responseHeaders })
-      })
-    } catch (err) {
-      console.warn('[WindowManager] failed to enable COOP/COEP headers', err)
-    }
-
     if (this.viteDevServerUrl) {
       this.window.webContents.on('before-input-event', (event, input) => {
         const isToggle =
@@ -114,25 +91,22 @@ export class WindowManager {
 
   /**
    * Send a message to the renderer using postMessage which supports
-   * transfer lists (ArrayBuffers, MessagePorts). Use this when sending
-   * large binary buffers like SharedArrayBuffer to avoid serialization errors.
+   * transfer lists (ArrayBuffers, MessagePorts). Returns true when the
+   * message was posted successfully so callers can decide how to fall
+   * back if postMessage is unsupported for a given payload.
    */
-  postMessageToRenderer(channel: string, message: any, transfer?: any[]): void {
-    if (this.isValid()) {
-      try {
-        // webContents.postMessage(channel, message, transfer)
-        this.window!.webContents.postMessage(channel, message, transfer || [])
-        return
-      } catch (err) {
-        // Fallback to send which will attempt structured clone (may fail for SAB)
-        console.warn('[WindowManager] postMessage failed, falling back to send', err)
-      }
+  postMessageToRenderer(channel: string, message: any, transfer?: any[]): boolean {
+    if (!this.isValid()) {
+      return false
+    }
 
-      try {
-        this.window!.webContents.send(channel, message)
-      } catch (err) {
-        console.error('[WindowManager] send fallback failed', err)
-      }
+    try {
+      // webContents.postMessage(channel, message, transfer)
+      this.window!.webContents.postMessage(channel, message, transfer || [])
+      return true
+    } catch (err) {
+      console.warn('[WindowManager] postMessage failed', err)
+      return false
     }
   }
 

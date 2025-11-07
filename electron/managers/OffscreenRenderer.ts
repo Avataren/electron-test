@@ -7,8 +7,6 @@ export class OffscreenRenderer {
   private readonly config: AppConfig
   private readonly windowManager: WindowManager
   private readonly paintingEnabled: Set<number> = new Set()
-  // Reuse SharedArrayBuffers per window to avoid reallocating on every frame
-  private readonly sharedBuffers: Map<number, SharedArrayBuffer> = new Map()
   // Track whether the renderer has acknowledged the first applied frame
   private readonly acknowledgedFirstFrame: Map<number, boolean> = new Map()
   // Track whether we're waiting for the initial ack for an index
@@ -26,6 +24,8 @@ export class OffscreenRenderer {
   private readonly initialAckTimeouts: Map<number, NodeJS.Timeout> = new Map()
   // How long to wait for an initial-frame ACK before sending a fallback (ms)
   private readonly initialAckTimeoutMs = 4000
+  // Track whether ArrayBuffer transfer lists fail so we fall back to IPC send directly
+  private arrayBufferTransferBlocked = false
 
   constructor(config: AppConfig, windowManager: WindowManager) {
     this.config = config
@@ -102,76 +102,62 @@ export class OffscreenRenderer {
     })
   }
 
-  private ensureSharedBuffer(index: number, byteLength: number): SharedArrayBuffer {
-    const existing = this.sharedBuffers.get(index)
-    if (existing && existing.byteLength === byteLength) {
-      return existing
-    }
-
-    const sab = new SharedArrayBuffer(byteLength)
-    this.sharedBuffers.set(index, sab)
-    return sab
-  }
-
-  private writeFrameToSharedBuffer(
-    index: number,
-    frame: { buffer: Buffer; size: { width: number; height: number } },
-  ): SharedArrayBuffer {
-    const expectedBytes = Math.max(1, frame.size.width) * Math.max(1, frame.size.height) * 4
-    const target = this.ensureSharedBuffer(index, expectedBytes)
-    const view = new Uint8Array(target)
-    const source = frame.buffer.subarray(0, Math.min(frame.buffer.length, view.length))
-    view.set(source)
-
-    if (source.length < view.length) {
-      view.fill(0, source.length)
-    }
-
-    return target
-  }
-
   private sendFrame(
     index: number,
     frame: { buffer: Buffer; size: { width: number; height: number } },
     keepPending: boolean,
   ): boolean {
-    const supportsSAB = typeof SharedArrayBuffer === 'function'
+    const timestamp = Date.now()
+    const fallbackPayload = {
+      index,
+      size: frame.size,
+      format: 'raw' as const,
+      timestamp,
+    }
 
-    if (supportsSAB) {
+    if (!this.arrayBufferTransferBlocked) {
       try {
-        const shared = this.writeFrameToSharedBuffer(index, frame)
-        this.windowManager.postMessageToRenderer('webview-frame', {
-          index,
-          buffer: shared,
-          size: frame.size,
-          format: 'sabs',
-          byteLength: shared.byteLength,
-          timestamp: Date.now(),
-        })
+        const ab = frame.buffer.buffer.slice(
+          frame.buffer.byteOffset,
+          frame.buffer.byteOffset + frame.buffer.byteLength,
+        )
+        const posted = this.windowManager.postMessageToRenderer(
+          'webview-frame',
+          { ...fallbackPayload, buffer: ab },
+          [ab],
+        )
 
-        if (!keepPending) {
-          this.pendingFrames.delete(index)
+        if (posted) {
+          if (!keepPending) {
+            this.pendingFrames.delete(index)
+          }
+          return true
         }
 
-        return true
+        if (!this.arrayBufferTransferBlocked) {
+          console.warn(
+            '[OffscreenRenderer] postMessage rejected ArrayBuffer payload, falling back to ipc send',
+            { index },
+          )
+          this.arrayBufferTransferBlocked = true
+        }
       } catch (err) {
-        console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
-          index,
-          err,
-        })
+        if (!this.arrayBufferTransferBlocked) {
+          console.warn('[OffscreenRenderer] failed to send ArrayBuffer frame, falling back to ipc send', {
+            index,
+            err,
+          })
+          this.arrayBufferTransferBlocked = true
+        }
       }
     }
 
     try {
-      const ab = frame.buffer.buffer.slice(
-        frame.buffer.byteOffset,
-        frame.buffer.byteOffset + frame.buffer.byteLength,
-      )
-      this.windowManager.postMessageToRenderer(
-        'webview-frame',
-        { index, buffer: ab, size: frame.size, format: 'raw' },
-        [ab],
-      )
+      this.windowManager.sendToRenderer('webview-frame', {
+        ...fallbackPayload,
+        buffer: Buffer.from(frame.buffer),
+      })
+
       if (!keepPending) {
         this.pendingFrames.delete(index)
       }
@@ -404,7 +390,6 @@ export class OffscreenRenderer {
     })
     this.windows.clear()
     this.paintingEnabled.clear()
-    this.sharedBuffers.clear()
     this.pendingFrames.clear()
     this.acknowledgedFirstFrame.clear()
     this.waitingForAck.clear()
@@ -415,6 +400,7 @@ export class OffscreenRenderer {
 
     this.initialAckTimeouts.forEach((timer) => clearTimeout(timer))
     this.initialAckTimeouts.clear()
+    this.arrayBufferTransferBlocked = false
   }
 
   getWindows(): Map<number, BrowserWindow> {

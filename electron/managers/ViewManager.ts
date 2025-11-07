@@ -13,6 +13,8 @@ export class ViewManager {
   private readonly isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
   private readonly devToolsListeners: Array<() => void> = []
   private devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 }
+  private controlBarVisible = true
+  private viewDevToolsWindow: BrowserWindow | null = null
 
   constructor(config: AppConfig) {
     this.config = config
@@ -103,7 +105,7 @@ export class ViewManager {
 
       if (index === 0 && this.mainWindow && this.isDev) {
         view.webContents.once('did-finish-load', () => {
-          view.webContents.openDevTools({ mode: 'detach', activate: true })
+          this.showDevToolsForView(view)
         })
       }
 
@@ -136,7 +138,7 @@ export class ViewManager {
       windowBounds.height -
         this.devToolsInsets.top -
         this.devToolsInsets.bottom -
-        this.config.window.controlBarHeight,
+        (this.controlBarVisible ? this.config.window.controlBarHeight : 0),
     )
 
     return {
@@ -179,13 +181,22 @@ export class ViewManager {
       this.mainWindow.addBrowserView(view)
       this.updateBounds()
       if (this.isDev) {
-        if (view.webContents.isDevToolsOpened()) {
-          view.webContents.devToolsWebContents?.focus?.()
-        } else {
-          view.webContents.openDevTools({ mode: 'detach', activate: true })
-        }
+        this.showDevToolsForView(view)
       }
     }
+  }
+
+  hideAllViews(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+
+    this.views.forEach((view) => {
+      this.mainWindow!.removeBrowserView(view)
+    })
+  }
+
+  setControlBarVisible(visible: boolean): void {
+    this.controlBarVisible = visible
+    this.updateBounds()
   }
 
   cleanup(): void {
@@ -198,6 +209,10 @@ export class ViewManager {
       view.webContents.destroy()
     })
     this.views.clear()
+    if (this.viewDevToolsWindow && !this.viewDevToolsWindow.isDestroyed()) {
+      this.viewDevToolsWindow.close()
+    }
+    this.viewDevToolsWindow = null
   }
 
   getViews(): Map<number, BrowserView> {
@@ -208,6 +223,58 @@ export class ViewManager {
     this.devToolsListeners.forEach((remove) => remove())
     this.devToolsListeners.length = 0
     this.resetDevToolsInsets()
+  }
+
+  private ensureViewDevToolsWindow(): BrowserWindow | null {
+    if (this.viewDevToolsWindow && !this.viewDevToolsWindow.isDestroyed()) {
+      return this.viewDevToolsWindow
+    }
+
+    try {
+      this.viewDevToolsWindow = new BrowserWindow({
+        width: Math.max(960, Math.floor(this.config.window.width * 0.6)),
+        height: Math.max(720, Math.floor(this.config.window.height * 0.6)),
+        title: 'View DevTools',
+        autoHideMenuBar: true,
+      })
+      this.viewDevToolsWindow.on('closed', () => {
+        this.viewDevToolsWindow = null
+      })
+      return this.viewDevToolsWindow
+    } catch (err) {
+      console.warn('[ViewManager] Failed to create shared DevTools window', err)
+      this.viewDevToolsWindow = null
+      return null
+    }
+  }
+
+  private showDevToolsForView(view: BrowserView): void {
+    if (!this.isDev) return
+
+    const devToolsWindow = this.ensureViewDevToolsWindow()
+    if (!devToolsWindow) {
+      view.webContents.openDevTools({ mode: 'detach', activate: true })
+      return
+    }
+
+    try {
+      view.webContents.setDevToolsWebContents(devToolsWindow.webContents)
+    } catch (err) {
+      console.warn('[ViewManager] Failed to attach shared DevTools window', err)
+      if (!devToolsWindow.isDestroyed()) {
+        devToolsWindow.close()
+      }
+      this.viewDevToolsWindow = null
+      view.webContents.openDevTools({ mode: 'detach', activate: true })
+      return
+    }
+
+    if (!view.webContents.isDevToolsOpened()) {
+      view.webContents.openDevTools({ mode: 'detach', activate: true })
+    } else {
+      devToolsWindow.show()
+      devToolsWindow.focus()
+    }
   }
 
   private resetDevToolsInsets(): void {

@@ -15,7 +15,7 @@ declare global {
 
 interface WebviewFrame {
   index: number
-  buffer: Uint8Array
+  buffer: Uint8Array | ArrayBuffer
   size: { width: number; height: number }
 }
 
@@ -153,8 +153,8 @@ const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
   const tex = textures[index]
 
   // Create image from buffer
-  // Cast to any to allow ArrayBuffer|SharedArrayBuffer union at runtime
-  const blob = new Blob([buffer as any], { type: 'image/jpeg' })
+  const view = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  const blob = new Blob([view], { type: 'image/jpeg' })
   const url = URL.createObjectURL(blob)
 
   const img = new Image()
