@@ -163,13 +163,10 @@ export class OffscreenRenderer {
           return true
         }
 
-        if (!this.sharedBufferDeliveryBlocked) {
-          console.warn(
-            '[OffscreenRenderer] postMessage rejected SharedArrayBuffer payload, falling back to ArrayBuffer',
-            { index },
-          )
-          this.sharedBufferDeliveryBlocked = true
-        }
+        console.warn(
+          '[OffscreenRenderer] postMessage rejected SharedArrayBuffer payload, falling back to ArrayBuffer',
+          { index },
+        )
       } catch (err) {
         if (!this.sharedBufferDeliveryBlocked) {
           console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
@@ -227,10 +224,25 @@ export class OffscreenRenderer {
     }
 
     try {
-      this.windowManager.sendToRenderer('webview-frame', {
-        ...fallbackPayload,
-        buffer: Buffer.from(frame.buffer),
-      })
+      const ab = frame.buffer.buffer.slice(
+        frame.buffer.byteOffset,
+        frame.buffer.byteOffset + frame.buffer.byteLength,
+      )
+      const timestamp = Date.now()
+      const rawMessage = { index, buffer: ab, size: frame.size, format: 'raw' as const, timestamp }
+
+      const posted = this.windowManager.postMessageToRenderer('webview-frame', rawMessage, [ab])
+
+      if (!posted) {
+        const uintView = new Uint8Array(ab)
+        this.windowManager.sendToRenderer('webview-frame', {
+          index,
+          buffer: uintView,
+          size: frame.size,
+          format: 'raw' as const,
+          timestamp,
+        })
+      }
 
       if (!keepPending) {
         this.pendingFrames.delete(index)
