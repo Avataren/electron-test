@@ -26,6 +26,10 @@ export class OffscreenRenderer {
   private readonly initialAckTimeouts: Map<number, NodeJS.Timeout> = new Map()
   // How long to wait for an initial-frame ACK before sending a fallback (ms)
   private readonly initialAckTimeoutMs = 4000
+  // Track whether SharedArrayBuffer delivery is blocked so we avoid repeated errors
+  private sharedBufferDeliveryBlocked = false
+  // Track whether ArrayBuffer transfer lists fail so we fall back to IPC send directly
+  private arrayBufferTransferBlocked = false
 
   constructor(config: AppConfig, windowManager: WindowManager) {
     this.config = config
@@ -135,43 +139,99 @@ export class OffscreenRenderer {
     frame: { buffer: Buffer; size: { width: number; height: number } },
     keepPending: boolean,
   ): boolean {
-    const supportsSAB = typeof SharedArrayBuffer === 'function'
+    const supportsSAB = typeof SharedArrayBuffer === 'function' && !this.sharedBufferDeliveryBlocked
 
     if (supportsSAB) {
       try {
         const shared = this.writeFrameToSharedBuffer(index, frame)
-        this.windowManager.postMessageToRenderer('webview-frame', {
+        const sabMessage = {
           index,
           buffer: shared,
           size: frame.size,
-          format: 'sabs',
+          format: 'sabs' as const,
           byteLength: shared.byteLength,
           timestamp: Date.now(),
-        })
-
-        if (!keepPending) {
-          this.pendingFrames.delete(index)
         }
 
-        return true
+        const posted = this.windowManager.postMessageToRenderer('webview-frame', sabMessage)
+
+        if (posted) {
+          if (!keepPending) {
+            this.pendingFrames.delete(index)
+          }
+
+          return true
+        }
+
+        if (!this.sharedBufferDeliveryBlocked) {
+          console.warn(
+            '[OffscreenRenderer] postMessage rejected SharedArrayBuffer payload, falling back to ArrayBuffer',
+            { index },
+          )
+          this.sharedBufferDeliveryBlocked = true
+        }
       } catch (err) {
-        console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
-          index,
-          err,
-        })
+        if (!this.sharedBufferDeliveryBlocked) {
+          console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
+            index,
+            err,
+          })
+          this.sharedBufferDeliveryBlocked = true
+        }
+      }
+    }
+
+    const timestamp = Date.now()
+    const fallbackPayload = {
+      index,
+      size: frame.size,
+      format: 'raw' as const,
+      timestamp,
+    }
+
+    if (!this.arrayBufferTransferBlocked) {
+      try {
+        const ab = frame.buffer.buffer.slice(
+          frame.buffer.byteOffset,
+          frame.buffer.byteOffset + frame.buffer.byteLength,
+        )
+        const posted = this.windowManager.postMessageToRenderer(
+          'webview-frame',
+          { ...fallbackPayload, buffer: ab },
+          [ab],
+        )
+
+        if (posted) {
+          if (!keepPending) {
+            this.pendingFrames.delete(index)
+          }
+          return true
+        }
+
+        if (!this.arrayBufferTransferBlocked) {
+          console.warn(
+            '[OffscreenRenderer] postMessage rejected ArrayBuffer payload, falling back to ipc send',
+            { index },
+          )
+          this.arrayBufferTransferBlocked = true
+        }
+      } catch (err) {
+        if (!this.arrayBufferTransferBlocked) {
+          console.warn('[OffscreenRenderer] failed to send ArrayBuffer frame, falling back to ipc send', {
+            index,
+            err,
+          })
+          this.arrayBufferTransferBlocked = true
+        }
       }
     }
 
     try {
-      const ab = frame.buffer.buffer.slice(
-        frame.buffer.byteOffset,
-        frame.buffer.byteOffset + frame.buffer.byteLength,
-      )
-      this.windowManager.postMessageToRenderer(
-        'webview-frame',
-        { index, buffer: ab, size: frame.size, format: 'raw' },
-        [ab],
-      )
+      this.windowManager.sendToRenderer('webview-frame', {
+        ...fallbackPayload,
+        buffer: Buffer.from(frame.buffer),
+      })
+
       if (!keepPending) {
         this.pendingFrames.delete(index)
       }
