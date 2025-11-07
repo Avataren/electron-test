@@ -5,7 +5,7 @@ import * as THREE from 'three'
 // Inline type to avoid import issues
 interface WebviewFrame {
   index: number
-  buffer: ArrayBuffer | SharedArrayBuffer | Uint8Array
+  buffer: ArrayBuffer | Uint8Array
   size?: { width: number; height: number }
 }
 
@@ -30,18 +30,11 @@ export function useWebviewFrames(
   const pendingFrameRafs = new Map<number, number>()
   const frameStatsLogged = new Set<number>()
 
-  const cloneToUint8Array = (buffer: ArrayBuffer | SharedArrayBuffer | Uint8Array) => {
+  const cloneToUint8Array = (buffer: ArrayBuffer | Uint8Array) => {
     if (buffer instanceof Uint8Array) {
       return buffer.slice()
     }
-    if (buffer instanceof ArrayBuffer) {
-      return new Uint8Array(buffer.slice(0))
-    }
-    // SharedArrayBuffer does not implement slice()
-    const view = new Uint8Array(buffer)
-    const copy = new Uint8Array(view.length)
-    copy.set(view)
-    return copy
+    return new Uint8Array(buffer.slice(0))
   }
 
   const logFrameStats = (
@@ -279,15 +272,12 @@ export function useWebviewFrames(
       }
     }
 
-    if (format === 'sabs' || format === 'raw') {
+    if (format === 'raw' || !format) {
       try {
         const reportedWidth = size?.width || 1
         const reportedHeight = size?.height || 1
 
-        const srcArr =
-          format === 'sabs'
-            ? new Uint8Array(buffer as SharedArrayBuffer)
-            : new Uint8Array(buffer)
+        const srcArr = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
         const byteLength = srcArr.length
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
 
@@ -385,7 +375,7 @@ export function useWebviewFrames(
     }
 
     console.log(`[useWebviewFrames] 🖼️ Processing encoded image for ${index}`)
-    const bufferArray = new Uint8Array(buffer)
+    const bufferArray = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
     const blob = new Blob([bufferArray], { type: 'image/jpeg' })
     const url = URL.createObjectURL(blob)
 

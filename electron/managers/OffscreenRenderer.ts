@@ -7,8 +7,6 @@ export class OffscreenRenderer {
   private readonly config: AppConfig
   private readonly windowManager: WindowManager
   private readonly paintingEnabled: Set<number> = new Set()
-  // Reuse SharedArrayBuffers per window to avoid reallocating on every frame
-  private readonly sharedBuffers: Map<number, SharedArrayBuffer> = new Map()
   // Track whether the renderer has acknowledged the first applied frame
   private readonly acknowledgedFirstFrame: Map<number, boolean> = new Map()
   // Track whether we're waiting for the initial ack for an index
@@ -106,34 +104,6 @@ export class OffscreenRenderer {
     })
   }
 
-  private ensureSharedBuffer(index: number, byteLength: number): SharedArrayBuffer {
-    const existing = this.sharedBuffers.get(index)
-    if (existing && existing.byteLength === byteLength) {
-      return existing
-    }
-
-    const sab = new SharedArrayBuffer(byteLength)
-    this.sharedBuffers.set(index, sab)
-    return sab
-  }
-
-  private writeFrameToSharedBuffer(
-    index: number,
-    frame: { buffer: Buffer; size: { width: number; height: number } },
-  ): SharedArrayBuffer {
-    const expectedBytes = Math.max(1, frame.size.width) * Math.max(1, frame.size.height) * 4
-    const target = this.ensureSharedBuffer(index, expectedBytes)
-    const view = new Uint8Array(target)
-    const source = frame.buffer.subarray(0, Math.min(frame.buffer.length, view.length))
-    view.set(source)
-
-    if (source.length < view.length) {
-      view.fill(0, source.length)
-    }
-
-    return target
-  }
-
   private sendFrame(
     index: number,
     frame: { buffer: Buffer; size: { width: number; height: number } },
@@ -141,7 +111,7 @@ export class OffscreenRenderer {
   ): boolean {
     const supportsSAB = typeof SharedArrayBuffer === 'function' && !this.sharedBufferDeliveryBlocked
 
-    if (supportsSAB) {
+    if (!this.arrayBufferTransferBlocked) {
       try {
         const shared = this.writeFrameToSharedBuffer(index, frame)
         const sabMessage = {
@@ -476,7 +446,6 @@ export class OffscreenRenderer {
     })
     this.windows.clear()
     this.paintingEnabled.clear()
-    this.sharedBuffers.clear()
     this.pendingFrames.clear()
     this.acknowledgedFirstFrame.clear()
     this.waitingForAck.clear()
@@ -487,6 +456,7 @@ export class OffscreenRenderer {
 
     this.initialAckTimeouts.forEach((timer) => clearTimeout(timer))
     this.initialAckTimeouts.clear()
+    this.arrayBufferTransferBlocked = false
   }
 
   getWindows(): Map<number, BrowserWindow> {
