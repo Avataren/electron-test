@@ -14,7 +14,6 @@ export class ViewManager {
   private readonly devToolsListeners: Array<() => void> = []
   private devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 }
   private controlBarVisible = true
-  private viewDevToolsWindow: BrowserWindow | null = null
 
   constructor(config: AppConfig) {
     this.config = config
