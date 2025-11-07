@@ -35,10 +35,17 @@ export class IPCHandlers {
     })
 
     ipcMain.handle('finish-setup', () => {
-      this.viewManager.cleanup()
       this.offscreenRenderer.createOffscreenWindows(this.config.urls)
       this.windowManager.sendToRenderer('setup-complete')
       this.onSetupComplete()
+    })
+
+    ipcMain.handle('show-browser-view', (_event, index: number) => {
+      this.viewManager.showView(index)
+    })
+
+    ipcMain.handle('hide-browser-views', () => {
+      this.viewManager.hideAllViews()
     })
 
     ipcMain.handle('reload-webview', (event, index: number) => {
@@ -134,6 +141,8 @@ export class IPCHandlers {
     ipcMain.removeHandler('set-active-painting-windows')
     ipcMain.removeHandler('enable-painting')
     ipcMain.removeHandler('disable-painting')
+    ipcMain.removeHandler('show-browser-view')
+    ipcMain.removeHandler('hide-browser-views')
       ipcMain.removeAllListeners('initial-frame-ack')
     ipcMain.removeAllListeners('texture-applied')
     ipcMain.removeAllListeners('frame-stats')
