@@ -12,6 +12,7 @@ export class ViewManager {
   private mainWindow: BrowserWindow | null = null
   private readonly isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
   private readonly devToolsListeners: Array<() => void> = []
+  private currentDevToolsViewId: number | null = null
   private devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 }
   private controlBarVisible = true
 
@@ -222,6 +223,7 @@ export class ViewManager {
     this.devToolsListeners.forEach((remove) => remove())
     this.devToolsListeners.length = 0
     this.resetDevToolsInsets()
+    this.currentDevToolsViewId = null
   }
 
   private ensureViewDevToolsWindow(): BrowserWindow | null {
@@ -238,6 +240,7 @@ export class ViewManager {
       })
       this.viewDevToolsWindow.on('closed', () => {
         this.viewDevToolsWindow = null
+        this.currentDevToolsViewId = null
       })
       return this.viewDevToolsWindow
     } catch (err) {
@@ -256,14 +259,26 @@ export class ViewManager {
       return
     }
 
+    const targetId = view.webContents.id
+
+    if (this.currentDevToolsViewId === targetId && view.webContents.isDevToolsOpened()) {
+      devToolsWindow.show()
+      devToolsWindow.focus()
+      return
+    }
+
     try {
-      view.webContents.setDevToolsWebContents(devToolsWindow.webContents)
+      if (this.currentDevToolsViewId !== targetId) {
+        view.webContents.setDevToolsWebContents(devToolsWindow.webContents)
+        this.currentDevToolsViewId = targetId
+      }
     } catch (err) {
       console.warn('[ViewManager] Failed to attach shared DevTools window', err)
       if (!devToolsWindow.isDestroyed()) {
         devToolsWindow.close()
       }
       this.viewDevToolsWindow = null
+      this.currentDevToolsViewId = null
       view.webContents.openDevTools({ mode: 'detach', activate: true })
       return
     }
