@@ -13,6 +13,7 @@ export class ViewManager {
   private readonly isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
   private readonly devToolsListeners: Array<() => void> = []
   private devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 }
+  private controlBarVisible = true
 
   constructor(config: AppConfig) {
     this.config = config
@@ -136,7 +137,7 @@ export class ViewManager {
       windowBounds.height -
         this.devToolsInsets.top -
         this.devToolsInsets.bottom -
-        this.config.window.controlBarHeight,
+        (this.controlBarVisible ? this.config.window.controlBarHeight : 0),
     )
 
     return {
@@ -186,6 +187,19 @@ export class ViewManager {
         }
       }
     }
+  }
+
+  hideAllViews(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+
+    this.views.forEach((view) => {
+      this.mainWindow!.removeBrowserView(view)
+    })
+  }
+
+  setControlBarVisible(visible: boolean): void {
+    this.controlBarVisible = visible
+    this.updateBounds()
   }
 
   cleanup(): void {

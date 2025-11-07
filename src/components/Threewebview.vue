@@ -17,6 +17,7 @@ const allTexturesLoaded = ref(false)
 const loadingProgress = ref(0)
 const textureUpdateTimestamps = ref<Map<number, number>>(new Map())
 const isInitialLoading = ref(true) // NEW: Track if we're in initial loading phase
+const showCanvas = ref(false)
 
 const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
@@ -179,6 +180,22 @@ const showSetupView = async (index: number) => {
   await window.ipcRenderer.invoke('show-setup-view', index)
 }
 
+const showBrowserView = async (index: number) => {
+  try {
+    await window.ipcRenderer.invoke('show-browser-view', index)
+  } catch (err) {
+    console.warn('[Threewebview] Failed to show browser view', err)
+  }
+}
+
+const hideBrowserViews = async () => {
+  try {
+    await window.ipcRenderer.invoke('hide-browser-views')
+  } catch (err) {
+    console.warn('[Threewebview] Failed to hide browser views', err)
+  }
+}
+
 const nextSetupPage = () => {
   const nextIdx = (store.setupIndex + 1) % urls.value.length
   showSetupView(nextIdx)
@@ -197,6 +214,7 @@ const finishSetup = async () => {
   loadingProgress.value = 0
   isInitialLoading.value = true // FIXED: Reset initial loading flag
   await window.ipcRenderer.invoke('finish-setup')
+  void showBrowserView(store.currentIndex)
   scheduleRender()
 }
 
@@ -358,14 +376,9 @@ function runRenderLoop() {
     const isComplete = transitionManager.update()
     needsRender = true
     if (isComplete) {
-      // Visual transition is complete, but DON'T set isTransitioning to false here
-      // It will be set to false at the end of the transition() function
-      const nextIdx = (store.currentIndex + 1) % urls.value.length
-      const nextNextIdx = (store.currentIndex + 2) % urls.value.length
       console.log(
-        `Transition complete. Current: ${store.currentIndex}, keeping painting for: ${store.currentIndex}, ${nextIdx}, ${nextNextIdx}`,
+        `Transition complete. Current: ${store.currentIndex}. Offscreen painting remains disabled until next capture.`,
       )
-      void updateActivePaintingWindows([store.currentIndex, nextIdx, nextNextIdx])
     }
   }
 
@@ -416,11 +429,6 @@ const scheduleRender = () => {
   }
 }
 
-const updateActivePaintingWindows = async (indices: number[]) => {
-  console.log(`Setting active painting windows: ${indices.join(', ')}`)
-  await window.ipcRenderer.invoke('set-active-painting-windows', indices)
-}
-
 const disablePaintingForIndices = async (indices: number[]) => {
   // Disable painting individually to avoid races while resizing the backing
   // surface. We call disable for each index and wait for the main process
@@ -443,6 +451,66 @@ const enablePaintingForIndices = async (indices: number[]) => {
     } catch (err) {
       console.warn(`[Threewebview] failed to enable painting for ${idx}`, err)
     }
+  }
+}
+
+const waitForTextureUpdates = async (
+  indices: number[],
+  previousTimestamps: Map<number, number>,
+  timeoutMs = 1000,
+  pollIntervalMs = 30,
+) => {
+  const start = Date.now()
+
+  while (Date.now() - start < timeoutMs) {
+    const allUpdated = indices.every((index) => {
+      const prev = previousTimestamps.get(index) ?? 0
+      const current = textureUpdateTimestamps.value.get(index) ?? 0
+      return current > prev
+    })
+
+    if (allUpdated) {
+      return true
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+  }
+
+  return false
+}
+
+const captureTexturesForTransition = async (indices: number[]) => {
+  if (!indices.length || store.setupMode) {
+    return
+  }
+
+  const unique = Array.from(new Set(indices))
+  const previous = new Map<number, number>()
+  unique.forEach((index) => {
+    previous.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
+  })
+
+  await enablePaintingForIndices(unique)
+
+  let updated = false
+
+  try {
+    updated = await waitForTextureUpdates(unique, previous, 1200)
+
+    if (!updated) {
+      console.warn('[Threewebview] Timed out waiting for fresh textures before transition', {
+        indices: unique,
+      })
+    }
+
+    // Allow a short settle window so the last paint is applied to the texture.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  } finally {
+    await disablePaintingForIndices(unique)
+  }
+
+  if (updated) {
+    console.debug('[Threewebview] Captured fresh textures for transition', { indices: unique })
   }
 }
 
@@ -470,15 +538,11 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
 
-  // Update currentIndex IMMEDIATELY to prevent race conditions with timer
+  await captureTexturesForTransition([fromIndex, targetIndex])
+
+  // Update currentIndex after textures are captured to keep UI in sync with the
+  // moment we begin the visual transition.
   store.setCurrentIndex(targetIndex)
-
-  // Enable painting for: from (for transition), target (to transition to), and next (to preload)
-  const nextAfterTarget = (targetIndex + 1) % urls.value.length
-  await updateActivePaintingWindows([fromIndex, targetIndex, nextAfterTarget])
-
-  // Give Electron 100ms to ensure painting is active
-  await new Promise((resolve) => setTimeout(resolve, 200))
 
   // Make target plane visible
   const targetPlane = planes[targetIndex]
@@ -486,60 +550,78 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
   if (!targetPlane || !fromPlane) {
     console.error('Planes not available for transition')
+    await showBrowserView(fromIndex)
+    store.setCurrentIndex(fromIndex)
     store.setTransitioning(false)
     return
   }
 
-  targetPlane.visible = true
-  scheduleRender()
+  const shouldRunVisualTransition = transitionsEnabled && Boolean(transitionManager)
+  let shouldRestoreBrowserView = false
 
-  // Start the visual transition effect
-  if (transitionsEnabled && transitionManager) {
-    transitionManager.startTransition(type, fromIndex, fromPlane.position)
-    scheduleRender()
-  }
-
-  // Hide the old plane
-  fromPlane.visible = false
-  scheduleRender()
-
-  if (!transitionsEnabled) {
-    store.setTransitioning(false)
-    return
-  }
-
-  // Wait for the visual transition to complete.
-  // Previously we used a fixed 2.5s timeout which could desync with the
-  // actual transition duration (framerate drops or different transition
-  // timings) and leave residues on the destination image. Instead poll
-  // the TransitionManager for completion with a sensible fallback timeout.
-  await new Promise<void>((resolve) => {
-    const maxWait = 10000 // 10s fallback to avoid hanging forever
-    const interval = 100
-    let waited = 0
-
-    const check = () => {
-      // If transitionManager is missing for some reason, stop waiting
-      if (!transitionManager) return resolve()
-
-      if (!transitionManager.hasActiveTransition()) {
-        return resolve()
-      }
-
-      waited += interval
-      if (waited >= maxWait) {
-        console.warn('Transition wait timed out after', maxWait, 'ms')
-        return resolve()
-      }
-
-      setTimeout(check, interval)
+  try {
+    if (shouldRunVisualTransition) {
+      shouldRestoreBrowserView = true
+      await hideBrowserViews()
+      showCanvas.value = true
     }
 
-    check()
-  })
+    targetPlane.visible = true
+    scheduleRender()
 
-  // NOW set transitioning to false - after everything is truly complete
-  store.setTransitioning(false)
+    // Start the visual transition effect
+    if (shouldRunVisualTransition && transitionManager) {
+      transitionManager.startTransition(type, fromIndex, fromPlane.position)
+      scheduleRender()
+    }
+
+    // Hide the old plane
+    fromPlane.visible = false
+    scheduleRender()
+
+    if (!shouldRunVisualTransition) {
+      await showBrowserView(store.currentIndex)
+      return
+    }
+
+    // Wait for the visual transition to complete.
+    // Previously we used a fixed 2.5s timeout which could desync with the
+    // actual transition duration (framerate drops or different transition
+    // timings) and leave residues on the destination image. Instead poll
+    // the TransitionManager for completion with a sensible fallback timeout.
+    await new Promise<void>((resolve) => {
+      const maxWait = 10000 // 10s fallback to avoid hanging forever
+      const interval = 100
+      let waited = 0
+
+      const check = () => {
+        // If transitionManager is missing for some reason, stop waiting
+        if (!transitionManager) return resolve()
+
+        if (!transitionManager.hasActiveTransition()) {
+          return resolve()
+        }
+
+        waited += interval
+        if (waited >= maxWait) {
+          console.warn('Transition wait timed out after', maxWait, 'ms')
+          return resolve()
+        }
+
+        setTimeout(check, interval)
+      }
+
+      check()
+    })
+  } finally {
+    if (shouldRestoreBrowserView) {
+      showCanvas.value = false
+      await showBrowserView(store.currentIndex)
+    }
+
+    // NOW set transitioning to false - after everything is truly complete
+    store.setTransitioning(false)
+  }
 }
 
 const rotateWebview = () => {
@@ -578,15 +660,18 @@ const checkAllTexturesLoaded = () => {
     console.log('🎉 All textures loaded, starting slideshow')
     scheduleRender()
 
-    // CRITICAL: Disable ALL painting first, then only enable what we need
+    // CRITICAL: Disable ALL painting so we stop pushing textures until the
+    // slideshow actually needs a new snapshot.
     const allIndices = Array.from({ length: urls.value.length }, (_, i) => i)
     allIndices.forEach(i => window.ipcRenderer.invoke('disable-painting', i))
 
-    // Small delay, then enable only first 3
-    setTimeout(() => {
-      updateActivePaintingWindows([0, 1, 2])
-      setTimeout(() => startTimers(), 2000)
-    }, 100)
+    // Give the BrowserViews a moment to settle before starting the rotation
+    // timers. New textures will be captured on-demand right before each
+    // transition.
+    setTimeout(() => startTimers(), 2000)
+
+    showCanvas.value = false
+    void showBrowserView(store.currentIndex)
   }
   loadingProgress.value = Math.round((loadedTextures.value.size / urls.value.length) * 100)
 }
@@ -595,7 +680,8 @@ const handleSetupComplete = async () => {
   console.log('Setup complete, loading all textures...')
   // Enable painting for ALL windows initially to load textures
   const allIndices = Array.from({ length: urls.value.length }, (_, i) => i)
-  await updateActivePaintingWindows(allIndices)
+  await enablePaintingForIndices(allIndices)
+  void showBrowserView(store.currentIndex)
 }
 
 const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) => {
@@ -736,7 +822,11 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <canvas ref="canvasRef" class="three-canvas" :class="{ hidden: store.setupMode }"></canvas>
+    <canvas
+      ref="canvasRef"
+      class="three-canvas"
+      :class="[{ 'setup-hidden': store.setupMode }, { visible: showCanvas } ]"
+    ></canvas>
 
     <div v-if="!store.setupMode && allTexturesLoaded" class="indicator">
       <div
@@ -770,9 +860,16 @@ onUnmounted(() => {
   display: block;
   width: 100%;
   height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
-.three-canvas.hidden {
+.three-canvas.visible {
+  opacity: 1;
+}
+
+.three-canvas.setup-hidden {
   display: none;
 }
 
