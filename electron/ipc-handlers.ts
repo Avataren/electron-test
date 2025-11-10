@@ -10,6 +10,7 @@ export class IPCHandlers {
   private readonly offscreenRenderer: OffscreenRenderer
   private readonly windowManager: WindowManager
   private readonly onSetupComplete: () => void
+  private offscreenResizeHandler: (() => void) | null = null
 
   constructor(
     config: AppConfig,
@@ -44,6 +45,10 @@ export class IPCHandlers {
       const height = bounds?.height ?? this.config.window.height
 
       this.offscreenRenderer.createOffscreenWindows(this.config.urls, width, height)
+
+      // Set up window resize handler to keep offscreen windows in sync with BrowserView
+      this.setupOffscreenResizeHandler()
+
       this.windowManager.sendToRenderer('setup-complete')
       this.onSetupComplete()
     })
@@ -140,7 +145,42 @@ export class IPCHandlers {
     })
   }
 
+  private setupOffscreenResizeHandler(): void {
+    const mainWindow = this.windowManager.getWindow()
+    if (!mainWindow) {
+      console.warn('[IPCHandlers] Cannot setup resize handler: main window not available')
+      return
+    }
+
+    // Remove existing handler if any
+    if (this.offscreenResizeHandler) {
+      mainWindow.off('resize', this.offscreenResizeHandler)
+    }
+
+    // Create new resize handler
+    this.offscreenResizeHandler = () => {
+      const bounds = this.windowManager.getContentBounds()
+      if (!bounds) return
+
+      console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}, resizing offscreen windows`)
+      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
+    }
+
+    // Attach to window resize event
+    mainWindow.on('resize', this.offscreenResizeHandler)
+    console.info('[IPCHandlers] Offscreen resize handler attached')
+  }
+
   unregister(): void {
+    // Clean up resize handler
+    if (this.offscreenResizeHandler) {
+      const mainWindow = this.windowManager.getWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.off('resize', this.offscreenResizeHandler)
+      }
+      this.offscreenResizeHandler = null
+    }
+
     ipcMain.removeHandler('get-webview-urls')
     ipcMain.removeHandler('show-setup-view')
     ipcMain.removeHandler('finish-setup')
