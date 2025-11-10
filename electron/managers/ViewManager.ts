@@ -237,45 +237,51 @@ export class ViewManager {
     const currentViews = this.mainWindow.getBrowserViews()
     const isAttached = currentViews.some(v => v === view)
 
-    try {
-      // If not attached, we need to temporarily show it to capture
-      if (!isAttached) {
-        console.log(`[ViewManager] Temporarily showing view ${index} for capture`)
-
-        // Save current view index (find which view is currently attached)
-        let previousViewIndex: number | null = null
-        for (const [idx, v] of this.views.entries()) {
-          if (currentViews.includes(v)) {
-            previousViewIndex = idx
-            break
-          }
-        }
-
-        // Show the view we want to capture
-        this.showView(index)
-
-        // Wait a frame for the view to render
-        await new Promise(resolve => setTimeout(resolve, 16))
-
-        // Capture
-        const image = await view.webContents.capturePage()
-        const bitmap = image.toBitmap()
-
-        // Restore previous view
-        if (previousViewIndex !== null) {
-          this.showView(previousViewIndex)
-        }
-
-        return bitmap
-      } else {
-        // View is already visible, capture directly
+    // If view is already visible, capture directly
+    if (isAttached) {
+      try {
         const image = await view.webContents.capturePage()
         return image.toBitmap()
+      } catch (err) {
+        console.error(`[ViewManager] Failed to capture page ${index}:`, err)
+        return null
       }
+    }
+
+    // View not attached - need to temporarily show it
+    console.log(`[ViewManager] Temporarily showing view ${index} for capture`)
+
+    // Save current view index (find which view is currently attached)
+    let previousViewIndex: number | null = null
+    for (const [idx, v] of this.views.entries()) {
+      if (currentViews.includes(v)) {
+        previousViewIndex = idx
+        break
+      }
+    }
+
+    let captureResult: Buffer | null = null
+
+    try {
+      // Show the view we want to capture
+      this.showView(index)
+
+      // Wait a frame for the view to render
+      await new Promise(resolve => setTimeout(resolve, 16))
+
+      // Capture
+      const image = await view.webContents.capturePage()
+      captureResult = image.toBitmap()
     } catch (err) {
       console.error(`[ViewManager] Failed to capture page ${index}:`, err)
-      return null
+    } finally {
+      // Always restore previous view, even if capture failed
+      if (previousViewIndex !== null) {
+        this.showView(previousViewIndex)
+      }
     }
+
+    return captureResult
   }
 
   private clearDevToolsListeners(): void {
