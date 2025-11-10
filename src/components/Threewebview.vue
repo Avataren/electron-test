@@ -523,19 +523,19 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
   for (const index of unique) {
     const texture = textures[index] as THREE.DataTexture | undefined
     if (!texture) {
-      console.warn(`[Threewebview] Texture ${index} is missing`)
-      continue
+      console.error(`[Threewebview] Texture ${index} is missing - blocking transition`)
+      return false
     }
 
     if (texture.userData?.isPlaceholder) {
-      console.warn(`[Threewebview] Texture ${index} is still a placeholder`)
-      continue
+      console.error(`[Threewebview] Texture ${index} is still a placeholder - blocking transition`)
+      return false
     }
 
     const image = texture.image as { width?: number; height?: number; data?: Uint8Array } | undefined
     if (!image?.data || !image.width || !image.height) {
-      console.warn(`[Threewebview] Texture ${index} has invalid image data`)
-      continue
+      console.error(`[Threewebview] Texture ${index} has invalid image data - blocking transition`)
+      return false
     }
 
     // Log texture dimensions for debugging
