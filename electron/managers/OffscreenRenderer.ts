@@ -99,14 +99,40 @@ export class OffscreenRenderer {
       // NativeImage.toBitmap returns a Buffer with BGRA order.
       const bitmap: Buffer = image.toBitmap()
       const size = image.getSize()
+
+      // Calculate actual bitmap dimensions from buffer size
+      // getSize() returns CSS pixels, but bitmap contains physical pixels
+      const bytesPerPixel = 4 // BGRA format
+      const actualPixelCount = bitmap.length / bytesPerPixel
+      const cssPixelCount = size.width * size.height
+      const scaleFactor = Math.sqrt(actualPixelCount / cssPixelCount)
+      const backingWidth = Math.round(size.width * scaleFactor)
+      const backingHeight = Math.round(size.height * scaleFactor)
+
       // Debug logs: include index, reported size, and bitmap byte length so
       // we can diagnose DPR/backing-store mismatches and GPU copy errors.
+      console.debug('[OffscreenRenderer] Paint event:', {
+        index,
+        cssSize: size,
+        backingSize: { width: backingWidth, height: backingHeight },
+        bitmapBytes: bitmap.length,
+        scaleFactor: scaleFactor.toFixed(2)
+      })
+
       try {
         // Coalesce: store latest frame as pending and schedule a send that
         // respects the configured frameRate. This prevents flooding the
         // renderer/IPC with every paint event which can starve texture
         // application.
-        this.pendingFrames.set(index, { buffer: Buffer.from(bitmap), size })
+        this.pendingFrames.set(index, {
+          buffer: Buffer.from(bitmap),
+          size: {
+            width: size.width,
+            height: size.height,
+            backingWidth,
+            backingHeight
+          } as any
+        })
 
         this.scheduleFrameSend(index, true)
       } catch (err) {
