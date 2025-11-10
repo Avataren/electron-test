@@ -35,6 +35,8 @@ export class IPCHandlers {
     })
 
     ipcMain.handle('finish-setup', () => {
+      // Hide control bar so browser views use full window height during slideshow
+      this.viewManager.setControlBarVisible(false)
       this.offscreenRenderer.createOffscreenWindows(this.config.urls)
       this.windowManager.sendToRenderer('setup-complete')
       this.onSetupComplete()
