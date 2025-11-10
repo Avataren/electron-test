@@ -97,6 +97,8 @@ export class ViewManager {
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          // Ensure consistent rendering with offscreen windows
+          zoomFactor: 1.0,
         },
       })
 
