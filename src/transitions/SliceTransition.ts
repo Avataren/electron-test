@@ -42,12 +42,15 @@ export class SliceTransition extends BaseTransition {
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 1,
+        depthTest: false,
+        depthWrite: false,
       })
 
       const slice = new THREE.Mesh(geometry, material)
 
       const y = planeHeight / 2 - sliceHeight / 2 - i * sliceHeight
-      slice.position.set(0, y, planePosition.z + 0.01)
+      slice.position.set(0, y, planePosition.z)
+      slice.renderOrder = 1000
 
       const direction = i % 2 === 0 ? 1 : -1
       const velocity = new THREE.Vector3(0.15, 0, 0)

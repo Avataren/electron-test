@@ -52,6 +52,8 @@ export class RainTransition extends BaseTransition {
           side: THREE.DoubleSide,
           transparent: true,
           opacity: 1,
+          depthTest: false,
+          depthWrite: false,
         })
 
         const fragment = new THREE.Mesh(geometry, material)
@@ -64,7 +66,8 @@ export class RainTransition extends BaseTransition {
           fragmentWidth,
           fragmentHeight,
         )
-        fragment.position.set(x, y, planePosition.z + 0.01)
+        fragment.position.set(x, y, planePosition.z)
+        fragment.renderOrder = 1000
 
         const velocity = new THREE.Vector3(
           (Math.random() - 0.5) * 0.02,

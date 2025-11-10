@@ -252,10 +252,13 @@ const createPlanes = () => {
       map: texture,
       side: THREE.DoubleSide,
       transparent: true,
+      depthTest: false,
+      depthWrite: false,
     })
 
     const plane = new THREE.Mesh(planeGeometry, material)
-    plane.position.set(0, 0, -index * 0.01)
+    plane.position.set(0, 0, 0)
+    plane.renderOrder = index
     plane.visible = index === 0
 
     planes.push(plane)
