@@ -503,5 +503,6 @@ export function useWebviewFrames(
     loadUrls,
     setupListeners,
     removeListeners,
+    applyFrameToTexture,
   }
 }

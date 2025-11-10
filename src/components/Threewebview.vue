@@ -34,7 +34,7 @@ const { scene, camera, renderer, initScene, onResize, dispose, FRUSTUM_HEIGHT, D
 
 const pageAspect = ref<number | null>(null)
 
-  const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
+  const { urls, loadUrls, setupListeners, removeListeners, applyFrameToTexture } = useWebviewFrames(
   textures,
   async (index: number, size?: { width: number; height: number; backingWidth?: number; backingHeight?: number }) => {
     // Update timestamp when texture receives new frame
@@ -510,32 +510,32 @@ const captureTexturesForTransition = async (indices: number[]) => {
   }
 
   const unique = Array.from(new Set(indices))
-  const previous = new Map<number, number>()
-  unique.forEach((index) => {
-    previous.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
-  })
 
-  await enablePaintingForIndices(unique)
+  console.log(`[Threewebview] Capturing textures from BrowserView for transition:`, unique)
 
-  let updated = false
+  // Capture directly from BrowserView instead of using offscreen windows
+  // This ensures perfect synchronization with what the user sees
+  for (const index of unique) {
+    try {
+      const captureData = await window.ipcRenderer.invoke('capture-browser-view', index)
 
-  try {
-    updated = await waitForTextureUpdates(unique, previous, 1200)
+      if (!captureData) {
+        console.warn(`[Threewebview] Failed to capture BrowserView ${index}`)
+        continue
+      }
 
-    if (!updated) {
-      console.warn('[Threewebview] Timed out waiting for fresh textures before transition', {
-        indices: unique,
-      })
+      // Apply the captured frame to the texture
+      const applied = applyFrameToTexture(captureData)
+
+      if (applied) {
+        console.log(`[Threewebview] ✓ Successfully captured and applied BrowserView ${index} to texture`)
+        textureUpdateTimestamps.value.set(index, Date.now())
+      } else {
+        console.warn(`[Threewebview] Failed to apply captured frame for index ${index}`)
+      }
+    } catch (err) {
+      console.error(`[Threewebview] Error capturing BrowserView ${index}:`, err)
     }
-
-    // Allow a short settle window so the last paint is applied to the texture.
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  } finally {
-    await disablePaintingForIndices(unique)
-  }
-
-  if (updated) {
-    console.debug('[Threewebview] Captured fresh textures for transition', { indices: unique })
   }
 
   // Validate that textures are properly initialized and have valid dimensions

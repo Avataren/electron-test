@@ -91,6 +91,24 @@ export class IPCHandlers {
       this.offscreenRenderer.disablePainting(index)
     })
 
+    // Capture page from BrowserView directly
+    ipcMain.handle('capture-browser-view', async (event, index: number) => {
+      const bitmap = await this.viewManager.capturePage(index)
+      if (!bitmap) {
+        console.warn(`[IPCHandlers] Failed to capture BrowserView ${index}`)
+        return null
+      }
+
+      // Return the bitmap with size information
+      const size = await this.getBrowserViewSize(index)
+      return {
+        index,
+        buffer: bitmap,
+        size,
+        format: 'BGRA'
+      }
+    })
+
       // Receive initial-frame ACKs from renderer and forward to offscreen renderer
       ipcMain.on('initial-frame-ack', (event, data: { index: number }) => {
         try {
@@ -145,6 +163,18 @@ export class IPCHandlers {
     })
   }
 
+  private async getBrowserViewSize(index: number): Promise<{ width: number; height: number } | null> {
+    const views = this.viewManager.getViews()
+    const view = views.get(index)
+    if (!view) return null
+
+    const bounds = view.getBounds()
+    return {
+      width: bounds.width,
+      height: bounds.height
+    }
+  }
+
   private setupOffscreenResizeHandler(): void {
     const mainWindow = this.windowManager.getWindow()
     if (!mainWindow) {
@@ -195,6 +225,7 @@ export class IPCHandlers {
     ipcMain.removeHandler('set-active-painting-windows')
     ipcMain.removeHandler('enable-painting')
     ipcMain.removeHandler('disable-painting')
+    ipcMain.removeHandler('capture-browser-view')
     ipcMain.removeHandler('show-browser-view')
     ipcMain.removeHandler('hide-browser-views')
       ipcMain.removeAllListeners('initial-frame-ack')
