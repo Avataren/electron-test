@@ -612,18 +612,28 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       showCanvas.value = true
     }
 
-    targetPlane.visible = true
-
-    // Start the visual transition effect BEFORE rendering to avoid showing destination
+    // Setup scene atomically to prevent rendering intermediate states
     if (shouldRunVisualTransition && transitionManager) {
+      // Create transition overlay FIRST (shows FROM texture at renderOrder 1000)
       transitionManager.startTransition(type, fromIndex, fromPlane.position)
+
+      // NOW make target visible (it will be underneath the overlay)
+      targetPlane.visible = true
+
+      // Hide the source plane (overlay now shows the FROM texture)
+      fromPlane.visible = false
+
+      // Force immediate synchronous render to ensure overlay is rendered
+      // This prevents any intermediate state from being visible
+      if (renderer.value && scene.value && camera.value) {
+        renderer.value.render(scene.value, camera.value)
+      }
+    } else {
+      // Non-transition path
+      targetPlane.visible = true
+      fromPlane.visible = false
+      scheduleRender()
     }
-
-    // Hide the old plane
-    fromPlane.visible = false
-
-    // Now render once with everything in place: target visible, transition overlay created, source hidden
-    scheduleRender()
 
     if (!shouldRunVisualTransition) {
       await showBrowserView(store.currentIndex)
