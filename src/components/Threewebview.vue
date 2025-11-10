@@ -628,6 +628,10 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       if (renderer.value && scene.value && camera.value) {
         renderer.value.render(scene.value, camera.value)
       }
+
+      // CRITICAL: Schedule renders to animate the transition
+      // The render loop will call transitionManager.update() on each frame
+      scheduleRender()
     } else {
       // Non-transition path
       targetPlane.visible = true
