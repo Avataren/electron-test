@@ -11,12 +11,12 @@ describe('PixelateTransition texture dimension handling', () => {
     scene = new THREE.Scene()
     textures = []
     planeConfig = { width: 1.6, height: 0.9 }
-
-    // Mock console.log to suppress output during tests
-    vi.spyOn(console, 'log').mockImplementation(() => {})
   })
 
   it('should use texture dimensions for resolution uniform, not plane dimensions', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
     // Create a mock DataTexture with specific dimensions
     const textureWidth = 1920
     const textureHeight = 1080
@@ -51,9 +51,12 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // Cleanup
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should fallback to plane dimensions if texture has no dimensions', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Create a texture without proper image dimensions
     const texture = new THREE.Texture()
     textures.push(texture)
@@ -77,9 +80,12 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // Cleanup
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should detect texture dimension changes during update', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Start with one set of dimensions
     const initialWidth = 800
     const initialHeight = 600
@@ -128,9 +134,12 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // Cleanup
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should update resolution via updateResolution method', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Create texture and transition
     const data = new Uint8Array(800 * 600 * 4)
     const texture = new THREE.DataTexture(data, 800, 600, THREE.RGBAFormat, THREE.UnsignedByteType)
@@ -159,9 +168,12 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // Cleanup
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should reset dimension tracking on cleanup', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Create texture and transition
     const data = new Uint8Array(1920 * 1080 * 4)
     const texture = new THREE.DataTexture(data, 1920, 1080, THREE.RGBAFormat, THREE.UnsignedByteType)
@@ -193,6 +205,7 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // Cleanup
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should log dimension information when creating transition', () => {
@@ -215,9 +228,12 @@ describe('PixelateTransition texture dimension handling', () => {
     )
 
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should handle multiple dimension updates during transition lifecycle', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Create texture
     const data1 = new Uint8Array(800 * 600 * 4)
     const texture = new THREE.DataTexture(data1, 800, 600, THREE.RGBAFormat, THREE.UnsignedByteType)
@@ -248,5 +264,6 @@ describe('PixelateTransition texture dimension handling', () => {
     expect(material.uniforms.resolution.value.y).toBe(2160)
 
     transition.cleanup()
+    vi.restoreAllMocks()
   })
 })

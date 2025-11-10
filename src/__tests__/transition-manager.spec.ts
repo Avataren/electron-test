@@ -22,12 +22,12 @@ describe('TransitionManager dimension propagation', () => {
     textures.push(texture1, texture2)
 
     transitionManager = new TransitionManager(scene, textures, planeConfig)
-
-    // Mock console.log to suppress output during tests
-    vi.spyOn(console, 'log').mockImplementation(() => {})
   })
 
   it('should update plane config dimensions', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
     const newConfig = { width: 2.0, height: 1.125 }
     transitionManager.updatePlaneConfig(newConfig)
 
@@ -49,9 +49,12 @@ describe('TransitionManager dimension propagation', () => {
     expect(geometry.parameters.height).toBe(newConfig.height)
 
     transitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should propagate texture dimensions to active transition when plane config is updated', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Start a transition
     const position = new THREE.Vector3(0, 0, 0)
     transitionManager.startTransition('pixelate', 0, position)
@@ -89,18 +92,25 @@ describe('TransitionManager dimension propagation', () => {
     expect(material.uniforms.resolution.value.y).toBe(newHeight)
 
     transitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should not crash when updating plane config with no active transition', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     expect(transitionManager.hasActiveTransition()).toBe(false)
 
     // This should not throw
     expect(() => {
       transitionManager.updatePlaneConfig({ width: 2.0, height: 1.125 })
     }).not.toThrow()
+
+    vi.restoreAllMocks()
   })
 
   it('should handle updatePlaneConfig when texture has no dimensions', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     // Create textures without proper image data
     const emptyTextures: THREE.Texture[] = [new THREE.Texture(), new THREE.Texture()]
     const emptyTransitionManager = new TransitionManager(scene, emptyTextures, planeConfig)
@@ -114,6 +124,7 @@ describe('TransitionManager dimension propagation', () => {
     }).not.toThrow()
 
     emptyTransitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should log when propagating texture dimensions to active transition', () => {
@@ -135,9 +146,12 @@ describe('TransitionManager dimension propagation', () => {
     )
 
     transitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should update transition at every step during animation', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const position = new THREE.Vector3(0, 0, 0)
     transitionManager.startTransition('pixelate', 0, position)
 
@@ -158,9 +172,12 @@ describe('TransitionManager dimension propagation', () => {
     }
 
     transitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should cleanup transition and remove from scene', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const position = new THREE.Vector3(0, 0, 0)
     transitionManager.startTransition('pixelate', 0, position)
 
@@ -171,9 +188,13 @@ describe('TransitionManager dimension propagation', () => {
 
     expect(scene.children.length).toBe(0)
     expect(transitionManager.hasActiveTransition()).toBe(false)
+
+    vi.restoreAllMocks()
   })
 
   it('should handle multiple transitions sequentially', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const position = new THREE.Vector3(0, 0, 0)
 
     // First transition
@@ -191,9 +212,12 @@ describe('TransitionManager dimension propagation', () => {
     expect(firstMesh).not.toBe(secondMesh)
 
     transitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 
   it('should cleanup previous transition when starting a new one', () => {
+    // Suppress console.log for this test
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const position = new THREE.Vector3(0, 0, 0)
 
     // First transition
@@ -209,5 +233,6 @@ describe('TransitionManager dimension propagation', () => {
     expect(firstMesh).not.toBe(secondMesh)
 
     transitionManager.cleanup()
+    vi.restoreAllMocks()
   })
 })
