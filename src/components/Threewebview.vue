@@ -313,10 +313,8 @@ const handleResize = async () => {
       transitionManager.updatePlaneConfig(newPlaneConfig)
     }
 
-    // Clear existing textures before resize
-    textures.forEach(texture => {
-      texture.dispose()
-    })
+    // Don't dispose textures - ensureDataTexture will handle resizing automatically
+    // when new frames arrive. Disposing creates a window where textures are invalid.
 
     // Ensure offscreen windows are resized
     try {
@@ -349,13 +347,26 @@ const handleResize = async () => {
         (store.currentIndex + 2) % planes.length,
       ]
 
+      // Capture current texture timestamps before resize
+      const previousTimestamps = new Map<number, number>()
+      active.forEach((index) => {
+        previousTimestamps.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
+      })
+
       await disablePaintingForIndices(active)
       await window.ipcRenderer.invoke('resize-active-offscreen-windows', active, pixelWidth, pixelHeight)
       await new Promise(res => setTimeout(res, 100))
       await enablePaintingForIndices(active)
-      await new Promise(res => setTimeout(res, 500))
 
-      // Force texture updates
+      // Wait for textures to actually update with new dimensions
+      const texturesUpdated = await waitForTextureUpdates(active, previousTimestamps, 1500)
+      if (!texturesUpdated) {
+        console.warn('[Threewebview] Timed out waiting for texture updates after resize')
+      } else {
+        console.log('[Threewebview] Textures successfully updated after resize')
+      }
+
+      // Force render update
       textures.forEach(texture => {
         texture.needsUpdate = true
       })
@@ -517,11 +528,45 @@ const captureTexturesForTransition = async (indices: number[]) => {
   if (updated) {
     console.debug('[Threewebview] Captured fresh textures for transition', { indices: unique })
   }
+
+  // Validate that textures are properly initialized and have valid dimensions
+  const expectedWidth = canvasRef.value?.clientWidth || window.innerWidth
+  const expectedHeight = canvasRef.value?.clientHeight || window.innerHeight
+
+  for (const index of unique) {
+    const texture = textures[index] as THREE.DataTexture | undefined
+    if (!texture) {
+      console.warn(`[Threewebview] Texture ${index} is missing`)
+      continue
+    }
+
+    if (texture.userData?.isPlaceholder) {
+      console.warn(`[Threewebview] Texture ${index} is still a placeholder`)
+      continue
+    }
+
+    const image = texture.image as { width?: number; height?: number; data?: Uint8Array } | undefined
+    if (!image?.data || !image.width || !image.height) {
+      console.warn(`[Threewebview] Texture ${index} has invalid image data`)
+      continue
+    }
+
+    // Log texture dimensions for debugging
+    console.debug(`[Threewebview] Texture ${index} dimensions:`, {
+      textureWidth: image.width,
+      textureHeight: image.height,
+      expectedWidth,
+      expectedHeight
+    })
+  }
 }
 
 const transition = async (targetIndex: number, type: TransitionType) => {
-  // Guard against multiple transitions and transitioning to current page
-  if (store.isTransitioning || targetIndex === store.currentIndex) {
+  // Guard against multiple transitions, resize operations, and transitioning to current page
+  if (store.isTransitioning || isResizing.value || targetIndex === store.currentIndex) {
+    if (isResizing.value) {
+      console.log('Skipping transition: resize in progress')
+    }
     return
   }
 
