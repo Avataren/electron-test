@@ -15,4 +15,12 @@ export abstract class BaseTransition {
   abstract create(fromIndex: number, planePosition: THREE.Vector3): void
   abstract update(): boolean
   abstract cleanup(): void
+
+  /**
+   * Optional method for transitions that need to respond to texture dimension changes.
+   * Called when the window is resized and textures are recaptured at new dimensions.
+   * @param width - New texture width in pixels
+   * @param height - New texture height in pixels
+   */
+  updateResolution?(width: number, height: number): void
 }

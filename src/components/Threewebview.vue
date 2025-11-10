@@ -304,6 +304,8 @@ const handleResize = async () => {
     const newPlaneConfig = onResize(pageAspect.value ?? undefined)
     if (!newPlaneConfig) return
 
+    console.log(`[Threewebview] Resize: New plane config ${newPlaneConfig.width.toFixed(2)}x${newPlaneConfig.height.toFixed(2)}`)
+
     planes.forEach((plane) => {
       plane.geometry.dispose()
       plane.geometry = new THREE.PlaneGeometry(newPlaneConfig.width, newPlaneConfig.height)
@@ -347,7 +349,14 @@ const handleResize = async () => {
         texture.needsUpdate = true
       })
 
-      console.log('[Threewebview] All textures updated after resize')
+      // Log final texture dimensions for debugging
+      const firstTexture = textures[0]
+      if (firstTexture) {
+        const texImage = (firstTexture as any).image
+        if (texImage?.width && texImage?.height) {
+          console.log(`[Threewebview] Resize complete. Final texture dimensions: ${texImage.width}x${texImage.height}`)
+        }
+      }
     } catch (err) {
       console.warn('[Threewebview] Resize error:', err)
     }
