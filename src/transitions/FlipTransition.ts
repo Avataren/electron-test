@@ -20,10 +20,13 @@ export class FlipTransition extends BaseTransition {
       map: texture,
       side: THREE.DoubleSide,
       transparent: true,
+      depthTest: false,
+      depthWrite: false,
     })
 
     this.planeMesh = new THREE.Mesh(geometry, material)
-    this.planeMesh.position.set(planePosition.x, planePosition.y, planePosition.z + 0.01)
+    this.planeMesh.position.set(planePosition.x, planePosition.y, planePosition.z)
+    this.planeMesh.renderOrder = 1000
     this.scene.add(this.planeMesh)
     this.progress = 0
   }
