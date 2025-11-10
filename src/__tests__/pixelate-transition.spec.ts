@@ -46,8 +46,8 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // Resolution uniform should match TEXTURE dimensions (1920x1080)
     // NOT plane dimensions (1.6x0.9 * 100 = 160x90)
-    expect(material.uniforms.resolution.value.x).toBe(textureWidth)
-    expect(material.uniforms.resolution.value.y).toBe(textureHeight)
+    expect(material.uniforms.resolution?.value.x).toBe(textureWidth)
+    expect(material.uniforms.resolution?.value.y).toBe(textureHeight)
 
     // Cleanup
     transition.cleanup()
@@ -75,8 +75,8 @@ describe('PixelateTransition texture dimension handling', () => {
     const material = transitionMesh.material as THREE.ShaderMaterial
 
     // Should fallback to plane dimensions * 100
-    expect(material.uniforms.resolution.value.x).toBe(planeConfig.width * 100)
-    expect(material.uniforms.resolution.value.y).toBe(planeConfig.height * 100)
+    expect(material.uniforms.resolution?.value.x).toBe(planeConfig.width * 100)
+    expect(material.uniforms.resolution?.value.y).toBe(planeConfig.height * 100)
 
     // Cleanup
     transition.cleanup()
@@ -111,8 +111,8 @@ describe('PixelateTransition texture dimension handling', () => {
     const material = transitionMesh.material as THREE.ShaderMaterial
 
     // Initial resolution should match initial dimensions
-    expect(material.uniforms.resolution.value.x).toBe(initialWidth)
-    expect(material.uniforms.resolution.value.y).toBe(initialHeight)
+    expect(material.uniforms.resolution?.value.x).toBe(initialWidth)
+    expect(material.uniforms.resolution?.value.y).toBe(initialHeight)
 
     // Simulate a resize by changing texture dimensions
     const newWidth = 1920
@@ -129,8 +129,8 @@ describe('PixelateTransition texture dimension handling', () => {
     expect(isComplete).toBe(false) // Transition not complete yet
 
     // Resolution uniform should be updated
-    expect(material.uniforms.resolution.value.x).toBe(newWidth)
-    expect(material.uniforms.resolution.value.y).toBe(newHeight)
+    expect(material.uniforms.resolution?.value.x).toBe(newWidth)
+    expect(material.uniforms.resolution?.value.y).toBe(newHeight)
 
     // Cleanup
     transition.cleanup()
@@ -156,15 +156,15 @@ describe('PixelateTransition texture dimension handling', () => {
     const material = transitionMesh.material as THREE.ShaderMaterial
 
     // Initial resolution
-    expect(material.uniforms.resolution.value.x).toBe(800)
-    expect(material.uniforms.resolution.value.y).toBe(600)
+    expect(material.uniforms.resolution?.value.x).toBe(800)
+    expect(material.uniforms.resolution?.value.y).toBe(600)
 
     // Call updateResolution with new dimensions
     transition.updateResolution!(1920, 1080)
 
     // Resolution should be updated
-    expect(material.uniforms.resolution.value.x).toBe(1920)
-    expect(material.uniforms.resolution.value.y).toBe(1080)
+    expect(material.uniforms.resolution?.value.x).toBe(1920)
+    expect(material.uniforms.resolution?.value.y).toBe(1080)
 
     // Cleanup
     transition.cleanup()
@@ -200,8 +200,8 @@ describe('PixelateTransition texture dimension handling', () => {
     const material = transitionMesh.material as THREE.ShaderMaterial
 
     // Should use texture dimensions again
-    expect(material.uniforms.resolution.value.x).toBe(1920)
-    expect(material.uniforms.resolution.value.y).toBe(1080)
+    expect(material.uniforms.resolution?.value.x).toBe(1920)
+    expect(material.uniforms.resolution?.value.y).toBe(1080)
 
     // Cleanup
     transition.cleanup()
@@ -250,18 +250,18 @@ describe('PixelateTransition texture dimension handling', () => {
 
     // First resize
     transition.updateResolution!(1024, 768)
-    expect(material.uniforms.resolution.value.x).toBe(1024)
-    expect(material.uniforms.resolution.value.y).toBe(768)
+    expect(material.uniforms.resolution?.value.x).toBe(1024)
+    expect(material.uniforms.resolution?.value.y).toBe(768)
 
     // Second resize
     transition.updateResolution!(1920, 1080)
-    expect(material.uniforms.resolution.value.x).toBe(1920)
-    expect(material.uniforms.resolution.value.y).toBe(1080)
+    expect(material.uniforms.resolution?.value.x).toBe(1920)
+    expect(material.uniforms.resolution?.value.y).toBe(1080)
 
     // Third resize
     transition.updateResolution!(3840, 2160)
-    expect(material.uniforms.resolution.value.x).toBe(3840)
-    expect(material.uniforms.resolution.value.y).toBe(2160)
+    expect(material.uniforms.resolution?.value.x).toBe(3840)
+    expect(material.uniforms.resolution?.value.y).toBe(2160)
 
     transition.cleanup()
     vi.restoreAllMocks()

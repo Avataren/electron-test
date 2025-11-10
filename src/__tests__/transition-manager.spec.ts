@@ -68,8 +68,8 @@ describe('TransitionManager dimension propagation', () => {
     const material = transitionMesh.material as THREE.ShaderMaterial
 
     // Initial resolution should match texture dimensions
-    expect(material.uniforms.resolution.value.x).toBe(320)
-    expect(material.uniforms.resolution.value.y).toBe(180)
+    expect(material.uniforms.resolution?.value.x).toBe(320)
+    expect(material.uniforms.resolution?.value.y).toBe(180)
 
     // Simulate a resize: update texture dimensions
     const newWidth = 640
@@ -88,8 +88,8 @@ describe('TransitionManager dimension propagation', () => {
     transitionManager.updatePlaneConfig(newConfig)
 
     // Resolution uniform should be updated to match new texture dimensions
-    expect(material.uniforms.resolution.value.x).toBe(newWidth)
-    expect(material.uniforms.resolution.value.y).toBe(newHeight)
+    expect(material.uniforms.resolution?.value.x).toBe(newWidth)
+    expect(material.uniforms.resolution?.value.y).toBe(newHeight)
 
     transitionManager.cleanup()
     vi.restoreAllMocks()
@@ -161,14 +161,14 @@ describe('TransitionManager dimension propagation', () => {
     const material = transitionMesh.material as THREE.ShaderMaterial
 
     // Initial progress should be 0
-    expect(material.uniforms.progress.value).toBe(0)
+    expect(material.uniforms.progress?.value).toBe(0)
 
     // Update multiple times
     let isComplete = false
     for (let i = 0; i < 10 && !isComplete; i++) {
       isComplete = transitionManager.update()
       // Progress should increase
-      expect(material.uniforms.progress.value).toBeGreaterThan(0)
+      expect(material.uniforms.progress?.value).toBeGreaterThan(0)
     }
 
     transitionManager.cleanup()
