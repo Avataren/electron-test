@@ -52,11 +52,17 @@ export class OffscreenRenderer {
     }
   }
 
-  createOffscreenWindows(urls: string[]): void {
+  createOffscreenWindows(urls: string[], width?: number, height?: number): void {
+    // Use provided dimensions or fall back to config (for backwards compatibility)
+    const windowWidth = width ?? this.config.window.width
+    const windowHeight = height ?? this.config.window.height
+
+    console.info(`[OffscreenRenderer] Creating offscreen windows at ${windowWidth}x${windowHeight}`)
+
     urls.forEach((url, index) => {
       const offscreenWin = new BrowserWindow({
-        width: this.config.window.width,
-        height: this.config.window.height,
+        width: windowWidth,
+        height: windowHeight,
         show: false,
         webPreferences: {
           offscreen: true,
