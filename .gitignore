@@ -9,11 +9,15 @@ lerna-debug.log*
 
 node_modules
 .DS_Store
-dist
-dist-ssr
+
+# Build output directories - exclude all files
+dist/
+dist-ssr/
+dist-electron/
+release/
+
 coverage
 *.local
-dist-electron
 
 # Editor directories and files
 .vscode/*
