@@ -2,12 +2,13 @@ import { shallowRef, type Ref } from 'vue'
 import * as THREE from 'three'
 import { calculatePlaneSize } from '../utils/geometry'
 
-const FOV = 75
+// Orthographic camera uses frustum size instead of FOV
+const FRUSTUM_HEIGHT = 2
 const DISTANCE = 5
 
 export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
   const scene = shallowRef<THREE.Scene | null>(null)
-  const camera = shallowRef<THREE.PerspectiveCamera | null>(null)
+  const camera = shallowRef<THREE.OrthographicCamera | null>(null)
   const renderer = shallowRef<THREE.WebGLRenderer | null>(null)
 
   const initScene = () => {
@@ -16,11 +17,18 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
     scene.value = new THREE.Scene()
     scene.value.background = new THREE.Color(0x000000)
 
-    camera.value = new THREE.PerspectiveCamera(
-      FOV,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000,
+    const aspect = window.innerWidth / window.innerHeight
+    const frustumWidth = FRUSTUM_HEIGHT * aspect
+    const halfWidth = frustumWidth / 2
+    const halfHeight = FRUSTUM_HEIGHT / 2
+
+    camera.value = new THREE.OrthographicCamera(
+      -halfWidth,  // left
+      halfWidth,   // right
+      halfHeight,  // top
+      -halfHeight, // bottom
+      0.1,         // near
+      1000,        // far
     )
     camera.value.position.z = DISTANCE
     camera.value.lookAt(0, 0, 0)
@@ -37,15 +45,24 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
   const onResize = (contentAspect?: number) => {
     if (!camera.value || !renderer.value) return
 
-    camera.value.aspect = window.innerWidth / window.innerHeight
+    const aspect = window.innerWidth / window.innerHeight
+    const frustumWidth = FRUSTUM_HEIGHT * aspect
+    const halfWidth = frustumWidth / 2
+    const halfHeight = FRUSTUM_HEIGHT / 2
+
+    camera.value.left = -halfWidth
+    camera.value.right = halfWidth
+    camera.value.top = halfHeight
+    camera.value.bottom = -halfHeight
     camera.value.updateProjectionMatrix()
+
     renderer.value.setSize(window.innerWidth, window.innerHeight)
 
     return calculatePlaneSize(
       {
-        fov: FOV,
+        frustumHeight: FRUSTUM_HEIGHT,
         distance: DISTANCE,
-        aspect: camera.value.aspect,
+        aspect: aspect,
       },
       contentAspect,
     )
@@ -64,7 +81,7 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
     initScene,
     onResize,
     dispose,
-    FOV,
+    FRUSTUM_HEIGHT,
     DISTANCE,
   }
 }

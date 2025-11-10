@@ -25,7 +25,7 @@ export interface PlaneConfig {
 }
 
 export interface CameraConfig {
-  fov: number
+  frustumHeight: number
   distance: number
   aspect: number
 }

@@ -29,7 +29,7 @@ let needsRender = false
 
 const transitionsEnabled = true
 
-const { scene, camera, renderer, initScene, onResize, dispose, FOV, DISTANCE } =
+const { scene, camera, renderer, initScene, onResize, dispose, FRUSTUM_HEIGHT, DISTANCE } =
   useThreeScene(canvasRef)
 
 const pageAspect = ref<number | null>(null)
@@ -143,11 +143,12 @@ const pageAspect = ref<number | null>(null)
       if (shouldUpdate) {
         pageAspect.value = reportedAspect
 
+        const aspect = window.innerWidth / window.innerHeight
         const newPlaneConfig = calculatePlaneSize(
           {
-            fov: FOV,
+            frustumHeight: FRUSTUM_HEIGHT,
             distance: DISTANCE,
-            aspect: camera.value.aspect,
+            aspect: aspect,
           },
           pageAspect.value,
         )
@@ -221,10 +222,11 @@ const finishSetup = async () => {
 const createPlanes = () => {
   if (!scene.value || !camera.value) return
 
+  const aspect = window.innerWidth / window.innerHeight
   const planeConfig = calculatePlaneSize({
-    fov: FOV,
+    frustumHeight: FRUSTUM_HEIGHT,
     distance: DISTANCE,
-    aspect: camera.value.aspect,
+    aspect: aspect,
   })
 
  const planeGeometry = new THREE.PlaneGeometry(planeConfig.width, planeConfig.height)
