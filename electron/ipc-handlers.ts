@@ -100,12 +100,13 @@ export class IPCHandlers {
       }
 
       // Return the bitmap with size information
+      // Format must be 'raw' so applyFrameToTexture processes it as raw BGRA pixel data
       const size = await this.getBrowserViewSize(index)
       return {
         index,
         buffer: bitmap,
         size,
-        format: 'BGRA'
+        format: 'raw'
       }
     })
 
