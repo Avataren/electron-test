@@ -62,8 +62,13 @@ export class OffscreenRenderer {
           offscreen: true,
           nodeIntegration: false,
           contextIsolation: true,
+          // Ensure consistent rendering with BrowserView
+          zoomFactor: 1.0,
         },
       })
+
+      // Set background to match BrowserView
+      offscreenWin.setBackgroundColor('#000000')
 
       offscreenWin.loadURL(url)
       this.windows.set(index, offscreenWin)
