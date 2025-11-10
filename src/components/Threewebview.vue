@@ -833,7 +833,8 @@ onUnmounted(() => {
       :class="[{ 'setup-hidden': store.setupMode }, { visible: showCanvas } ]"
     ></canvas>
 
-    <div v-if="!store.setupMode && allTexturesLoaded" class="indicator">
+    <!-- Indicator dots hidden during slideshow to avoid texture scale mismatch -->
+    <!-- <div v-if="!store.setupMode && allTexturesLoaded" class="indicator">
       <div
         v-for="(_, index) in urls.length"
         :key="index"
@@ -841,14 +842,15 @@ onUnmounted(() => {
         :class="{ active: store.currentIndex === index }"
         @click="handleDotClick(index)"
       ></div>
-    </div>
+    </div> -->
 
-    <div
+    <!-- Transition indicator hidden during slideshow to avoid texture scale mismatch -->
+    <!-- <div
       v-if="transitionsEnabled && store.isTransitioning && !store.setupMode && allTexturesLoaded"
       class="transition-indicator"
     >
       Transition {{ store.currentTransitionType === 'rain' ? '1: Rain' : '2: Slices' }}
-    </div>
+    </div> -->
   </div>
 </template>
 
