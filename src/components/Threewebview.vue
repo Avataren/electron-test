@@ -716,7 +716,7 @@ onMounted(async () => {
   createPlanes()
   scheduleRender()
   const win = window as any
-  win.__debugFrames = true
+  win.__debugFrames = false  // Disabled to prevent texture scale mismatch
   win.__dumpThreewebview = () => {
     return {
       currentIndex: store.currentIndex,
