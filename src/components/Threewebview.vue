@@ -340,25 +340,31 @@ const handleResize = async () => {
           })
       }
 
-      // Resize only active windows
+      // Resize ALL offscreen windows to ensure consistency
+      // Only wait for texture updates from active windows to avoid long delays
       const active = [
         store.currentIndex,
         (store.currentIndex + 1) % planes.length,
         (store.currentIndex + 2) % planes.length,
       ]
 
-      // Capture current texture timestamps before resize
+      // Capture current texture timestamps before resize for active windows
       const previousTimestamps = new Map<number, number>()
       active.forEach((index) => {
         previousTimestamps.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
       })
 
+      // Disable painting for active windows
       await disablePaintingForIndices(active)
-      await window.ipcRenderer.invoke('resize-active-offscreen-windows', active, pixelWidth, pixelHeight)
+
+      // Resize ALL windows, not just active ones
+      await window.ipcRenderer.invoke('resize-offscreen-windows', pixelWidth, pixelHeight)
       await new Promise(res => setTimeout(res, 100))
+
+      // Re-enable painting for active windows
       await enablePaintingForIndices(active)
 
-      // Wait for textures to actually update with new dimensions
+      // Wait for textures to actually update with new dimensions (active windows only)
       const texturesUpdated = await waitForTextureUpdates(active, previousTimestamps, 1500)
       if (!texturesUpdated) {
         console.warn('[Threewebview] Timed out waiting for texture updates after resize')
@@ -795,6 +801,13 @@ onMounted(async () => {
   setupListeners()
 
   window.addEventListener('resize', handleResize)
+
+  // Listen for main window resize events from main process
+  window.ipcRenderer.on('main-window-resized', () => {
+    console.log('[Threewebview] Received main-window-resized event, triggering handleResize')
+    handleResize()
+  })
+
   window.ipcRenderer.on('setup-complete', async () => {
     await handleSetupComplete()
     // Texture loading and timer starting now handled by checkAllTexturesLoaded()
@@ -807,6 +820,7 @@ onUnmounted(() => {
   window.ipcRenderer.off('webview-loaded', handleWebviewLoaded)
   removeListeners()
   window.removeEventListener('resize', handleResize)
+  window.ipcRenderer.off('main-window-resized', handleResize)
   window.ipcRenderer.off('setup-complete', handleSetupComplete)
 
   if (animationFrameId !== null) {

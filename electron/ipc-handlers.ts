@@ -163,7 +163,13 @@ export class IPCHandlers {
       if (!bounds) return
 
       console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}, resizing offscreen windows`)
-      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
+
+      // Notify renderer about the resize so it can handle its own resize logic
+      // which includes devicePixelRatio calculations and texture updates
+      this.windowManager.sendToRenderer('main-window-resized', {
+        width: bounds.width,
+        height: bounds.height
+      })
     }
 
     // Attach to window resize event
