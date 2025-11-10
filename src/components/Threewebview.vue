@@ -576,7 +576,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
     // Start the visual transition effect
     if (shouldRunVisualTransition && transitionManager) {
-      transitionManager.startTransition(type, fromIndex, fromPlane.position)
+      transitionManager.startTransition(type, targetIndex, fromPlane.position)
       scheduleRender()
     }
 
