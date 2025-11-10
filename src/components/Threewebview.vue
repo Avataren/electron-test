@@ -340,37 +340,40 @@ const handleResize = async () => {
           })
       }
 
-      // Resize ALL offscreen windows to ensure consistency
-      // Only wait for texture updates from active windows to avoid long delays
-      const active = [
-        store.currentIndex,
-        (store.currentIndex + 1) % planes.length,
-        (store.currentIndex + 2) % planes.length,
-      ]
+      // FIXED: Update ALL textures after resize, not just active ones.
+      // This ensures that when any slideshow transition happens after resize,
+      // all textures have the correct dimensions and align perfectly with their planes.
+      // Previously, only active windows were updated, causing the first transition
+      // to a non-active window to have misaligned textures.
+      const allIndices = Array.from({ length: planes.length }, (_, i) => i)
 
-      // Capture current texture timestamps before resize for active windows
+      // Capture current texture timestamps before resize for ALL windows
       const previousTimestamps = new Map<number, number>()
-      active.forEach((index) => {
+      allIndices.forEach((index) => {
         previousTimestamps.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
       })
 
-      // Disable painting for active windows
-      await disablePaintingForIndices(active)
+      // Disable painting for all windows
+      await disablePaintingForIndices(allIndices)
 
-      // Resize ALL windows, not just active ones
+      // Resize ALL windows to new dimensions
       await window.ipcRenderer.invoke('resize-offscreen-windows', pixelWidth, pixelHeight)
       await new Promise(res => setTimeout(res, 100))
 
-      // Re-enable painting for active windows
-      await enablePaintingForIndices(active)
+      // Re-enable painting for all windows to get fresh textures with correct dimensions
+      await enablePaintingForIndices(allIndices)
 
-      // Wait for textures to actually update with new dimensions (active windows only)
-      const texturesUpdated = await waitForTextureUpdates(active, previousTimestamps, 1500)
+      // Wait for ALL textures to update with new dimensions
+      // This ensures perfect alignment on the very first transition after resize
+      const texturesUpdated = await waitForTextureUpdates(allIndices, previousTimestamps, 2000)
       if (!texturesUpdated) {
         console.warn('[Threewebview] Timed out waiting for texture updates after resize')
       } else {
-        console.log('[Threewebview] Textures successfully updated after resize')
+        console.log('[Threewebview] All textures successfully updated after resize')
       }
+
+      // Disable painting again - textures will be captured on-demand during transitions
+      await disablePaintingForIndices(allIndices)
 
       // Force render update
       textures.forEach(texture => {
