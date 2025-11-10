@@ -613,16 +613,16 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     }
 
     targetPlane.visible = true
-    scheduleRender()
 
-    // Start the visual transition effect
+    // Start the visual transition effect BEFORE rendering to avoid showing destination
     if (shouldRunVisualTransition && transitionManager) {
       transitionManager.startTransition(type, fromIndex, fromPlane.position)
-      scheduleRender()
     }
 
     // Hide the old plane
     fromPlane.visible = false
+
+    // Now render once with everything in place: target visible, transition overlay created, source hidden
     scheduleRender()
 
     if (!shouldRunVisualTransition) {
