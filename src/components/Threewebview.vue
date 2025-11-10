@@ -313,73 +313,41 @@ const handleResize = async () => {
       transitionManager.updatePlaneConfig(newPlaneConfig)
     }
 
-    // Don't dispose textures - ensureDataTexture will handle resizing automatically
-    // when new frames arrive. Disposing creates a window where textures are invalid.
-
-    // Ensure offscreen windows are resized
+    // Capture fresh textures from all BrowserViews at the new size
     try {
-      const cssWidth = canvasRef.value?.clientWidth || window.innerWidth
-      const cssHeight = canvasRef.value?.clientHeight || window.innerHeight
-      const dpr = window.devicePixelRatio || 1
-      const maxTex = renderer.value?.capabilities?.maxTextureSize || 8192
+      console.log('[Threewebview] Capturing textures from all BrowserViews after resize')
 
-      // Calculate safe dimensions that respect GPU limits
-      const backingWidth = Math.round(cssWidth * dpr)
-      const backingHeight = Math.round(cssHeight * dpr)
-
-      let pixelWidth = cssWidth
-      let pixelHeight = cssHeight
-
-      if (backingWidth > maxTex || backingHeight > maxTex) {
-        const scale = maxTex / Math.max(backingWidth, backingHeight)
-        pixelWidth = Math.max(1, Math.round(cssWidth * scale))
-        pixelHeight = Math.max(1, Math.round(cssHeight * scale))
-        console.warn('[Threewebview] Scaling down window size to respect GPU limits',
-          { original: { cssWidth, cssHeight, backingWidth, backingHeight },
-            scaled: { pixelWidth, pixelHeight, maxTex }
-          })
-      }
-
-      // FIXED: Update ALL textures after resize, not just active ones.
-      // This ensures that when any slideshow transition happens after resize,
-      // all textures have the correct dimensions and align perfectly with their planes.
-      // Previously, only active windows were updated, causing the first transition
-      // to a non-active window to have misaligned textures.
       const allIndices = Array.from({ length: planes.length }, (_, i) => i)
 
-      // Capture current texture timestamps before resize for ALL windows
-      const previousTimestamps = new Map<number, number>()
-      allIndices.forEach((index) => {
-        previousTimestamps.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
-      })
+      // Capture all BrowserViews at the new size
+      for (const index of allIndices) {
+        try {
+          const captureData = await window.ipcRenderer.invoke('capture-browser-view', index)
 
-      // Disable painting for all windows
-      await disablePaintingForIndices(allIndices)
+          if (!captureData) {
+            console.warn(`[Threewebview] Failed to capture BrowserView ${index} after resize`)
+            continue
+          }
 
-      // Resize ALL windows to new dimensions
-      await window.ipcRenderer.invoke('resize-offscreen-windows', pixelWidth, pixelHeight)
-      await new Promise(res => setTimeout(res, 100))
+          const applied = applyFrameToTexture(captureData)
 
-      // Re-enable painting for all windows to get fresh textures with correct dimensions
-      await enablePaintingForIndices(allIndices)
-
-      // Wait for ALL textures to update with new dimensions
-      // This ensures perfect alignment on the very first transition after resize
-      const texturesUpdated = await waitForTextureUpdates(allIndices, previousTimestamps, 2000)
-      if (!texturesUpdated) {
-        console.warn('[Threewebview] Timed out waiting for texture updates after resize')
-      } else {
-        console.log('[Threewebview] All textures successfully updated after resize')
+          if (applied) {
+            console.log(`[Threewebview] ✓ Updated texture ${index} after resize`)
+            textureUpdateTimestamps.value.set(index, Date.now())
+          } else {
+            console.warn(`[Threewebview] Failed to apply texture ${index} after resize`)
+          }
+        } catch (err) {
+          console.error(`[Threewebview] Error capturing BrowserView ${index} after resize:`, err)
+        }
       }
-
-      // Disable painting again - textures will be captured on-demand during transitions
-      await disablePaintingForIndices(allIndices)
 
       // Force render update
       textures.forEach(texture => {
         texture.needsUpdate = true
       })
 
+      console.log('[Threewebview] All textures updated after resize')
     } catch (err) {
       console.warn('[Threewebview] Resize error:', err)
     }
@@ -504,14 +472,16 @@ const waitForTextureUpdates = async (
   return false
 }
 
-const captureTexturesForTransition = async (indices: number[]) => {
+const captureTexturesForTransition = async (indices: number[]): Promise<boolean> => {
   if (!indices.length || store.setupMode) {
-    return
+    return true
   }
 
   const unique = Array.from(new Set(indices))
 
   console.log(`[Threewebview] Capturing textures from BrowserView for transition:`, unique)
+
+  let allCaptured = true
 
   // Capture directly from BrowserView instead of using offscreen windows
   // This ensures perfect synchronization with what the user sees
@@ -520,7 +490,8 @@ const captureTexturesForTransition = async (indices: number[]) => {
       const captureData = await window.ipcRenderer.invoke('capture-browser-view', index)
 
       if (!captureData) {
-        console.warn(`[Threewebview] Failed to capture BrowserView ${index}`)
+        console.error(`[Threewebview] ❌ Failed to capture BrowserView ${index}`)
+        allCaptured = false
         continue
       }
 
@@ -531,11 +502,18 @@ const captureTexturesForTransition = async (indices: number[]) => {
         console.log(`[Threewebview] ✓ Successfully captured and applied BrowserView ${index} to texture`)
         textureUpdateTimestamps.value.set(index, Date.now())
       } else {
-        console.warn(`[Threewebview] Failed to apply captured frame for index ${index}`)
+        console.error(`[Threewebview] ❌ Failed to apply captured frame for index ${index}`)
+        allCaptured = false
       }
     } catch (err) {
-      console.error(`[Threewebview] Error capturing BrowserView ${index}:`, err)
+      console.error(`[Threewebview] ❌ Error capturing BrowserView ${index}:`, err)
+      allCaptured = false
     }
+  }
+
+  if (!allCaptured) {
+    console.error('[Threewebview] Not all textures were captured successfully')
+    return false
   }
 
   // Validate that textures are properly initialized and have valid dimensions
@@ -568,6 +546,8 @@ const captureTexturesForTransition = async (indices: number[]) => {
       expectedHeight
     })
   }
+
+  return true
 }
 
 const transition = async (targetIndex: number, type: TransitionType) => {
@@ -597,7 +577,14 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
 
-  await captureTexturesForTransition([fromIndex, targetIndex])
+  // Capture textures - abort if any capture fails
+  const captureSuccess = await captureTexturesForTransition([fromIndex, targetIndex])
+
+  if (!captureSuccess) {
+    console.error('[Threewebview] Aborting transition due to texture capture failure')
+    store.setTransitioning(false)
+    return
+  }
 
   // Update currentIndex after textures are captured to keep UI in sync with the
   // moment we begin the visual transition.
