@@ -34,7 +34,7 @@ const { scene, camera, renderer, initScene, onResize, dispose, FRUSTUM_HEIGHT, D
 
 const pageAspect = ref<number | null>(null)
 
-  const { urls, loadUrls, setupListeners, removeListeners } = useWebviewFrames(
+  const { urls, loadUrls, setupListeners, removeListeners, applyFrameToTexture } = useWebviewFrames(
   textures,
   async (index: number, size?: { width: number; height: number; backingWidth?: number; backingHeight?: number }) => {
     // Update timestamp when texture receives new frame
@@ -340,37 +340,40 @@ const handleResize = async () => {
           })
       }
 
-      // Resize ALL offscreen windows to ensure consistency
-      // Only wait for texture updates from active windows to avoid long delays
-      const active = [
-        store.currentIndex,
-        (store.currentIndex + 1) % planes.length,
-        (store.currentIndex + 2) % planes.length,
-      ]
+      // FIXED: Update ALL textures after resize, not just active ones.
+      // This ensures that when any slideshow transition happens after resize,
+      // all textures have the correct dimensions and align perfectly with their planes.
+      // Previously, only active windows were updated, causing the first transition
+      // to a non-active window to have misaligned textures.
+      const allIndices = Array.from({ length: planes.length }, (_, i) => i)
 
-      // Capture current texture timestamps before resize for active windows
+      // Capture current texture timestamps before resize for ALL windows
       const previousTimestamps = new Map<number, number>()
-      active.forEach((index) => {
+      allIndices.forEach((index) => {
         previousTimestamps.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
       })
 
-      // Disable painting for active windows
-      await disablePaintingForIndices(active)
+      // Disable painting for all windows
+      await disablePaintingForIndices(allIndices)
 
-      // Resize ALL windows, not just active ones
+      // Resize ALL windows to new dimensions
       await window.ipcRenderer.invoke('resize-offscreen-windows', pixelWidth, pixelHeight)
       await new Promise(res => setTimeout(res, 100))
 
-      // Re-enable painting for active windows
-      await enablePaintingForIndices(active)
+      // Re-enable painting for all windows to get fresh textures with correct dimensions
+      await enablePaintingForIndices(allIndices)
 
-      // Wait for textures to actually update with new dimensions (active windows only)
-      const texturesUpdated = await waitForTextureUpdates(active, previousTimestamps, 1500)
+      // Wait for ALL textures to update with new dimensions
+      // This ensures perfect alignment on the very first transition after resize
+      const texturesUpdated = await waitForTextureUpdates(allIndices, previousTimestamps, 2000)
       if (!texturesUpdated) {
         console.warn('[Threewebview] Timed out waiting for texture updates after resize')
       } else {
-        console.log('[Threewebview] Textures successfully updated after resize')
+        console.log('[Threewebview] All textures successfully updated after resize')
       }
+
+      // Disable painting again - textures will be captured on-demand during transitions
+      await disablePaintingForIndices(allIndices)
 
       // Force render update
       textures.forEach(texture => {
@@ -507,32 +510,32 @@ const captureTexturesForTransition = async (indices: number[]) => {
   }
 
   const unique = Array.from(new Set(indices))
-  const previous = new Map<number, number>()
-  unique.forEach((index) => {
-    previous.set(index, textureUpdateTimestamps.value.get(index) ?? 0)
-  })
 
-  await enablePaintingForIndices(unique)
+  console.log(`[Threewebview] Capturing textures from BrowserView for transition:`, unique)
 
-  let updated = false
+  // Capture directly from BrowserView instead of using offscreen windows
+  // This ensures perfect synchronization with what the user sees
+  for (const index of unique) {
+    try {
+      const captureData = await window.ipcRenderer.invoke('capture-browser-view', index)
 
-  try {
-    updated = await waitForTextureUpdates(unique, previous, 1200)
+      if (!captureData) {
+        console.warn(`[Threewebview] Failed to capture BrowserView ${index}`)
+        continue
+      }
 
-    if (!updated) {
-      console.warn('[Threewebview] Timed out waiting for fresh textures before transition', {
-        indices: unique,
-      })
+      // Apply the captured frame to the texture
+      const applied = applyFrameToTexture(captureData)
+
+      if (applied) {
+        console.log(`[Threewebview] ✓ Successfully captured and applied BrowserView ${index} to texture`)
+        textureUpdateTimestamps.value.set(index, Date.now())
+      } else {
+        console.warn(`[Threewebview] Failed to apply captured frame for index ${index}`)
+      }
+    } catch (err) {
+      console.error(`[Threewebview] Error capturing BrowserView ${index}:`, err)
     }
-
-    // Allow a short settle window so the last paint is applied to the texture.
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  } finally {
-    await disablePaintingForIndices(unique)
-  }
-
-  if (updated) {
-    console.debug('[Threewebview] Captured fresh textures for transition', { indices: unique })
   }
 
   // Validate that textures are properly initialized and have valid dimensions

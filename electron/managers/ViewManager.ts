@@ -221,6 +221,22 @@ export class ViewManager {
     return this.views
   }
 
+  async capturePage(index: number): Promise<Buffer | null> {
+    const view = this.views.get(index)
+    if (!view) {
+      console.warn(`[ViewManager] Cannot capture: view ${index} not found`)
+      return null
+    }
+
+    try {
+      const image = await view.webContents.capturePage()
+      return image.toBitmap()
+    } catch (err) {
+      console.error(`[ViewManager] Failed to capture page ${index}:`, err)
+      return null
+    }
+  }
+
   private clearDevToolsListeners(): void {
     this.devToolsListeners.forEach((remove) => remove())
     this.devToolsListeners.length = 0
