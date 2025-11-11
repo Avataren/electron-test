@@ -618,20 +618,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     return
   }
 
-  // Capture textures - abort if any capture fails
-  const captureSuccess = await captureTexturesForTransition([fromIndex, targetIndex])
-
-  if (!captureSuccess) {
-    console.error('[Threewebview] Aborting transition due to texture capture failure')
-    store.setTransitioning(false)
-    return
-  }
-
-  // Update currentIndex after textures are captured to keep UI in sync with the
-  // moment we begin the visual transition.
-  store.setCurrentIndex(targetIndex)
-
-  // Make target plane visible
+  // Get plane references early
   const targetPlane = planes[targetIndex]
   const fromPlane = planes[fromIndex]
 
@@ -649,10 +636,14 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   try {
     if (shouldRunVisualTransition) {
       shouldRestoreBrowserView = true
+
+      // CRITICAL: Hide browser views FIRST, before capturing
+      // This prevents any browser view from being visible during capture
       await hideBrowserViews()
 
-      // CRITICAL: Force renderer to match current window size before showing canvas
-      // The renderer may have been initialized when canvas was hidden or at wrong size
+      // CRITICAL: Show and prepare canvas BEFORE capturing textures
+      // This ensures when target view is temporarily shown for capture,
+      // it's hidden behind the opaque canvas
       if (renderer.value && canvasRef.value) {
         const currentWidth = window.innerWidth
         const currentHeight = window.innerHeight
@@ -707,7 +698,35 @@ const transition = async (targetIndex: number, type: TransitionType) => {
         }
       }
 
+      // Show canvas with source content to hide any browser view flashing
+      // Temporarily show fromPlane so we have something to render
+      fromPlane.visible = true
+      targetPlane.visible = false
       showCanvas.value = true
+
+      // Force immediate render to ensure canvas is visible and opaque
+      if (renderer.value && scene.value && camera.value) {
+        renderer.value.render(scene.value, camera.value)
+      }
+
+      // Small delay to ensure canvas is painted and browser views are fully hidden
+      await new Promise(resolve => setTimeout(resolve, 32))
+    }
+
+    // NOW capture textures - target view may be temporarily shown but hidden behind canvas
+    const captureSuccess = await captureTexturesForTransition([fromIndex, targetIndex])
+
+    if (!captureSuccess) {
+      console.error('[Threewebview] Aborting transition due to texture capture failure')
+      store.setTransitioning(false)
+      return
+    }
+
+    // Update currentIndex after textures are captured
+    store.setCurrentIndex(targetIndex)
+
+    if (shouldRunVisualTransition) {
+      // Canvas is already visible from earlier, now setup the transition scene
     }
 
     // Setup scene atomically to prevent rendering intermediate states
