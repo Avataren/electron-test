@@ -221,7 +221,7 @@ export class ViewManager {
     return this.views
   }
 
-  async capturePage(index: number): Promise<Buffer | null> {
+  async capturePage(index: number): Promise<{ bitmap: Buffer; imageSize: { width: number; height: number } } | null> {
     const view = this.views.get(index)
     if (!view) {
       console.warn(`[ViewManager] Cannot capture: view ${index} not found`)
@@ -241,7 +241,11 @@ export class ViewManager {
     if (isAttached) {
       try {
         const image = await view.webContents.capturePage()
-        return image.toBitmap()
+        const size = image.getSize()
+        return {
+          bitmap: image.toBitmap(),
+          imageSize: size
+        }
       } catch (err) {
         console.error(`[ViewManager] Failed to capture page ${index}:`, err)
         return null
@@ -260,7 +264,7 @@ export class ViewManager {
       }
     }
 
-    let captureResult: Buffer | null = null
+    let captureResult: { bitmap: Buffer; imageSize: { width: number; height: number } } | null = null
 
     try {
       // Show the view we want to capture
@@ -271,7 +275,11 @@ export class ViewManager {
 
       // Capture
       const image = await view.webContents.capturePage()
-      captureResult = image.toBitmap()
+      const size = image.getSize()
+      captureResult = {
+        bitmap: image.toBitmap(),
+        imageSize: size
+      }
     } catch (err) {
       console.error(`[ViewManager] Failed to capture page ${index}:`, err)
     } finally {

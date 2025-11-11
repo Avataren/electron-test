@@ -93,19 +93,44 @@ export class IPCHandlers {
 
     // Capture page from BrowserView directly
     ipcMain.handle('capture-browser-view', async (event, index: number) => {
-      const bitmap = await this.viewManager.capturePage(index)
-      if (!bitmap) {
+      const captureResult = await this.viewManager.capturePage(index)
+      if (!captureResult) {
         console.warn(`[IPCHandlers] Failed to capture BrowserView ${index}`)
         return null
       }
 
-      // Return the bitmap with size information
+      const { bitmap, imageSize } = captureResult
+
+      // Get the CSS bounds of the BrowserView
+      const bounds = await this.getBrowserViewSize(index)
+      if (!bounds) {
+        console.warn(`[IPCHandlers] Failed to get BrowserView bounds for ${index}`)
+        return null
+      }
+
+      // Calculate backing dimensions from bitmap size
+      // The bitmap is in BGRA format (4 bytes per pixel)
+      const bytesPerPixel = 4
+      const pixelCount = bitmap.length / bytesPerPixel
+
+      // Try to determine actual dimensions from bitmap data
+      // imageSize from NativeImage should give us the actual pixel dimensions
+      const backingWidth = imageSize.width
+      const backingHeight = imageSize.height
+
+      console.log(`[IPCHandlers] Captured BrowserView ${index}: CSS ${bounds.width}x${bounds.height}, backing ${backingWidth}x${backingHeight}, bitmap bytes: ${bitmap.length}`)
+
+      // Return the bitmap with complete size information
       // Format must be 'raw' so applyFrameToTexture processes it as raw BGRA pixel data
-      const size = await this.getBrowserViewSize(index)
       return {
         index,
         buffer: bitmap,
-        size,
+        size: {
+          width: bounds.width,      // CSS pixels
+          height: bounds.height,     // CSS pixels
+          backingWidth,              // Physical pixels
+          backingHeight              // Physical pixels
+        },
         format: 'raw'
       }
     })
@@ -164,15 +189,22 @@ export class IPCHandlers {
     })
   }
 
-  private async getBrowserViewSize(index: number): Promise<{ width: number; height: number } | null> {
+  private async getBrowserViewSize(index: number): Promise<{ width: number; height: number; backingWidth?: number; backingHeight?: number } | null> {
     const views = this.viewManager.getViews()
     const view = views.get(index)
     if (!view) return null
 
     const bounds = view.getBounds()
+
+    // Get the zoom factor to account for DPI scaling
+    // BrowserView uses zoomFactor 1.0, so we need to detect the actual backing scale
+    // from the captured bitmap size. For now, return CSS dimensions and let the
+    // renderer infer backing dimensions from the bitmap data.
     return {
       width: bounds.width,
-      height: bounds.height
+      height: bounds.height,
+      // Note: backingWidth/backingHeight will be inferred by useWebviewFrames
+      // from the actual bitmap buffer size and devicePixelRatio
     }
   }
 
@@ -194,6 +226,10 @@ export class IPCHandlers {
       if (!bounds) return
 
       console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}, resizing offscreen windows`)
+
+      // Resize offscreen windows to match the new window dimensions
+      // This ensures that offscreen-rendered frames match the BrowserView size
+      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
 
       // Notify renderer about the resize so it can handle its own resize logic
       // which includes devicePixelRatio calculations and texture updates
