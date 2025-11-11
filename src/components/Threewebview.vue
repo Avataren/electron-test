@@ -610,6 +610,14 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
 
+  // CRITICAL: Verify fromIndex before capture
+  console.log(`[Threewebview] Transition indices: fromIndex=${fromIndex}, targetIndex=${targetIndex}`)
+  if (fromIndex === targetIndex) {
+    console.error(`[Threewebview] ❌ CRITICAL: fromIndex equals targetIndex! This should never happen!`)
+    store.setTransitioning(false)
+    return
+  }
+
   // Capture textures - abort if any capture fails
   const captureSuccess = await captureTexturesForTransition([fromIndex, targetIndex])
 
