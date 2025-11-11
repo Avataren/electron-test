@@ -618,6 +618,63 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     if (shouldRunVisualTransition) {
       shouldRestoreBrowserView = true
       await hideBrowserViews()
+
+      // CRITICAL: Force renderer to match current window size before showing canvas
+      // The renderer may have been initialized when canvas was hidden or at wrong size
+      if (renderer.value && canvasRef.value) {
+        const currentWidth = window.innerWidth
+        const currentHeight = window.innerHeight
+        const dpr = window.devicePixelRatio || 1
+        const canvasWidth = renderer.value.domElement.width
+        const canvasHeight = renderer.value.domElement.height
+        const expectedWidth = Math.round(currentWidth * dpr)
+        const expectedHeight = Math.round(currentHeight * dpr)
+
+        if (canvasWidth !== expectedWidth || canvasHeight !== expectedHeight) {
+          console.warn(`[Threewebview] ⚠️  RENDERER SIZE MISMATCH BEFORE TRANSITION!`)
+          console.warn(`  - Renderer canvas: ${canvasWidth}x${canvasHeight}`)
+          console.warn(`  - Window size: ${currentWidth}x${currentHeight}`)
+          console.warn(`  - Expected (window * ${dpr}): ${expectedWidth}x${expectedHeight}`)
+          console.warn(`  - FORCING IMMEDIATE RESIZE...`)
+
+          // Force immediate resize of renderer
+          renderer.value.setSize(currentWidth, currentHeight)
+          renderer.value.setPixelRatio(dpr)
+
+          // Update camera frustum
+          if (camera.value) {
+            const aspect = currentWidth / currentHeight
+            const frustumWidth = FRUSTUM_HEIGHT * aspect
+            const halfWidth = frustumWidth / 2
+            const halfHeight = FRUSTUM_HEIGHT / 2
+            camera.value.left = -halfWidth
+            camera.value.right = halfWidth
+            camera.value.top = halfHeight
+            camera.value.bottom = -halfHeight
+            camera.value.updateProjectionMatrix()
+            console.warn(`  - Camera frustum updated for aspect ${aspect.toFixed(2)}`)
+          }
+
+          // Update plane geometries
+          const newPlaneConfig = calculatePlaneSize({
+            frustumHeight: FRUSTUM_HEIGHT,
+            distance: DISTANCE,
+            aspect: currentWidth / currentHeight
+          })
+          planes.forEach((plane) => {
+            plane.geometry.dispose()
+            plane.geometry = new THREE.PlaneGeometry(newPlaneConfig.width, newPlaneConfig.height)
+          })
+          if (transitionManager) {
+            transitionManager.updatePlaneConfig(newPlaneConfig)
+          }
+
+          console.warn(`  - Resize complete: canvas now ${renderer.value.domElement.width}x${renderer.value.domElement.height}`)
+        } else {
+          console.log(`[Threewebview] Renderer size OK: ${canvasWidth}x${canvasHeight}`)
+        }
+      }
+
       showCanvas.value = true
     }
 
