@@ -34,8 +34,6 @@ export class FlipTransition extends BaseTransition {
   update(): boolean {
     if (!this.planeMesh) return true
 
-    this.progress += 1 / 60 / this.duration
-
     // Create easing function for smooth animation
     const easeInOutCubic = (t: number): number => {
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
@@ -54,6 +52,9 @@ export class FlipTransition extends BaseTransition {
     const material = this.planeMesh.material as THREE.MeshBasicMaterial
     const opacity = Math.abs(Math.cos(easedProgress * Math.PI))
     material.opacity = opacity
+
+    // Increment progress after applying transformations
+    this.progress += 1 / 60 / this.duration
 
     return this.progress >= 1.0
   }

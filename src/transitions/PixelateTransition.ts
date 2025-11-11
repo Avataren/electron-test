@@ -12,19 +12,32 @@ export class PixelateTransition extends BaseTransition {
     const { width, height } = this.planeConfig
     const geometry = new THREE.PlaneGeometry(width, height)
 
+  console.log(`[PixelateTransition] Creating transition overlay for fromIndex=${fromIndex}`)
+  console.log(`[PixelateTransition] Total textures available: ${this.textures.length}`)
+
   const texture = this.textures[fromIndex]
-  if (!texture) return
+  if (!texture) {
+    console.error(`[PixelateTransition] ❌ No texture found at fromIndex=${fromIndex}`)
+    return
+  }
 
   // Use the shared texture reference from the main textures array so it
   // stays up-to-date with resizes and new frames.
   texture.colorSpace = THREE.SRGBColorSpace
   texture.needsUpdate = true
 
-    // Get resolution from actual texture dimensions, not plane dimensions
-    // This ensures shader calculations match the texture data exactly
-    const textureImage = texture.image as any
-    const texWidth = textureImage?.width || width * 100
-    const texHeight = textureImage?.height || height * 100
+  // DEBUG: Log texture info to verify we're using the correct one
+  // Get resolution from actual texture dimensions, not plane dimensions
+  // This ensures shader calculations match the texture data exactly
+  const textureImage = texture.image as any
+  const texWidth = textureImage?.width || width * 100
+  const texHeight = textureImage?.height || height * 100
+
+  console.log(`[PixelateTransition] Using texture at index ${fromIndex}:`, {
+    width: texWidth,
+    height: texHeight,
+    hasData: Boolean(textureImage?.data)
+  })
     this.lastTextureWidth = texWidth
     this.lastTextureHeight = texHeight
 
@@ -101,8 +114,6 @@ export class PixelateTransition extends BaseTransition {
   update(): boolean {
     if (!this.planeMesh) return true
 
-    this.progress += 1 / 60 / this.duration
-
     const material = this.planeMesh.material as THREE.ShaderMaterial
     if (material.uniforms) {
       // Check for texture dimension changes and update resolution uniform if needed
@@ -123,11 +134,18 @@ export class PixelateTransition extends BaseTransition {
         }
       }
 
+      // CRITICAL: Set the uniform to the current progress value BEFORE incrementing.
+      // This ensures the first rendered frame uses progress=0, preventing a flash
+      // of the destination image before the transition interpolation starts.
       const progressU = (material.uniforms as any).progress
       if (progressU && typeof progressU.value !== 'undefined') {
         progressU.value = this.progress
       }
     }
+
+    // Increment progress AFTER setting the uniform so the current frame uses
+    // the previous progress value
+    this.progress += 1 / 60 / this.duration
 
     return this.progress >= 1.0
   }

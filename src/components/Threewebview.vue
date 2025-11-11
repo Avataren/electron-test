@@ -610,6 +610,14 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   store.setTransitioning(true)
   const fromIndex = store.currentIndex
 
+  // CRITICAL: Verify fromIndex before capture
+  console.log(`[Threewebview] Transition indices: fromIndex=${fromIndex}, targetIndex=${targetIndex}`)
+  if (fromIndex === targetIndex) {
+    console.error(`[Threewebview] ❌ CRITICAL: fromIndex equals targetIndex! This should never happen!`)
+    store.setTransitioning(false)
+    return
+  }
+
   // Capture textures - abort if any capture fails
   const captureSuccess = await captureTexturesForTransition([fromIndex, targetIndex])
 
@@ -704,6 +712,14 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
     // Setup scene atomically to prevent rendering intermediate states
     if (shouldRunVisualTransition && transitionManager) {
+      // CRITICAL: Temporarily stop the render loop to prevent race conditions
+      // during scene setup. Cancel any pending animation frame.
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId)
+        animationFrameId = null
+      }
+      needsRender = false
+
       // Create transition overlay FIRST (shows FROM texture at renderOrder 1000)
       transitionManager.startTransition(type, fromIndex, fromPlane.position)
 
@@ -719,7 +735,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
         renderer.value.render(scene.value, camera.value)
       }
 
-      // CRITICAL: Schedule renders to animate the transition
+      // CRITICAL: NOW schedule renders to animate the transition
       // The render loop will call transitionManager.update() on each frame
       scheduleRender()
     } else {
