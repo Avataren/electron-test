@@ -106,6 +106,23 @@ export class TransitionManager {
   updatePlaneConfig(config: PlaneConfig): void {
     this.planeConfig.width = config.width
     this.planeConfig.height = config.height
+
+    // If there's an active transition, notify it about the dimension change
+    // We need to get the actual texture dimensions, not plane dimensions
+    if (this.currentTransition && this.currentTransition.updateResolution) {
+      // Get texture dimensions from the first texture in the array
+      // (all textures should have the same dimensions after a resize)
+      const firstTexture = this.textures[0]
+      if (firstTexture) {
+        const textureImage = (firstTexture as any).image
+        if (textureImage?.width && textureImage?.height) {
+          const texWidth = textureImage.width
+          const texHeight = textureImage.height
+          console.log(`[TransitionManager] Propagating texture dimensions to active transition: ${texWidth}x${texHeight}`)
+          this.currentTransition.updateResolution(texWidth, texHeight)
+        }
+      }
+    }
   }
 
   getAllTransitionTypes(): TransitionType[] {
