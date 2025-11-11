@@ -28,15 +28,15 @@ export class PixelateTransition extends BaseTransition {
     this.lastTextureWidth = texWidth
     this.lastTextureHeight = texHeight
 
-    console.log(`[PixelateTransition] ==================== CREATING TRANSITION ====================`)
-    console.log(`[PixelateTransition] Texture index: ${fromIndex}`)
-    console.log(`[PixelateTransition] Texture resolution: ${texWidth}x${texHeight}px`)
-    console.log(`[PixelateTransition] Plane geometry size: ${width.toFixed(2)}x${height.toFixed(2)} (world units)`)
-    console.log(`[PixelateTransition] Plane position: (${planePosition.x.toFixed(2)}, ${planePosition.y.toFixed(2)}, ${planePosition.z.toFixed(2)})`)
-    console.log(`[PixelateTransition] Texture has valid image: ${!!(textureImage?.width && textureImage?.height)}`)
-    console.log(`[PixelateTransition] Window size: ${window.innerWidth}x${window.innerHeight}`)
-    console.log(`[PixelateTransition] Device pixel ratio: ${window.devicePixelRatio}`)
-    console.log(`[PixelateTransition] ================================================================`)
+    // Log detailed information about dimensions for debugging
+    console.log(`[PixelateTransition] Creating transition:`)
+    console.log(`  - Texture resolution: ${texWidth}x${texHeight}px (from texture.image)`)
+    console.log(`  - Plane size: ${width.toFixed(2)}x${height.toFixed(2)} (world units)`)
+    console.log(`  - Texture has valid dimensions: ${!!(textureImage?.width && textureImage?.height)}`)
+
+    if (!textureImage?.width || !textureImage?.height) {
+      console.warn(`[PixelateTransition] ⚠️  Texture missing dimensions, using fallback calculation (plane * 100)`)
+    }
 
     // Custom shader for pixelate and dissolve effect
     const material = new THREE.ShaderMaterial({

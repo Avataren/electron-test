@@ -291,7 +291,7 @@ export function useWebviewFrames(
         let initialWidth = 0
         let initialHeight = 0
 
-        // If backing dimensions are provided, use them directly
+        // If backingWidth/backingHeight are provided, use them directly
         if (size?.backingWidth && size?.backingHeight) {
           console.log(`[useWebviewFrames] Using provided backing dimensions for ${index}: ${size.backingWidth}x${size.backingHeight}`)
           initialWidth = size.backingWidth
@@ -301,12 +301,15 @@ export function useWebviewFrames(
           const expectedBytes = initialWidth * initialHeight * 4
           if (byteLength !== expectedBytes) {
             console.warn(`[useWebviewFrames] ⚠️  Buffer size mismatch for ${index}: expected ${expectedBytes} bytes, got ${byteLength}`)
-            console.warn(`[useWebviewFrames] Will try to use dimensions anyway - mismatch may be due to rounding`)
-            // Continue anyway - the mismatch might be due to rounding in the scale factor calculation
+            // Try to infer correct dimensions as fallback
+            const inferredHeight = Math.max(1, Math.round(byteLength / (initialWidth * 4)))
+            if (inferredHeight * initialWidth * 4 === byteLength) {
+              console.warn(`[useWebviewFrames] Using inferred height: ${inferredHeight}`)
+              initialHeight = inferredHeight
+            }
           }
         } else {
-          // Fallback to inference when backing dimensions not provided
-          console.log(`[useWebviewFrames] No backing dimensions provided for ${index}, inferring from buffer size`)
+          // Fallback to old inference logic when backing dimensions not provided
           const reportedBytes = reportedWidth * reportedHeight * 4
           const dprWidth = Math.max(1, Math.round(reportedWidth * dpr))
           const dprHeight = Math.max(1, Math.round(reportedHeight * dpr))
@@ -349,24 +352,21 @@ export function useWebviewFrames(
         writeBGRAIntoTexture(dataTexture, srcArr, true)
         dataTexture.needsUpdate = true
 
-        // Determine CSS dimensions
+        // Use reported CSS dimensions when backing dimensions are provided
+        // Otherwise calculate from DPI as before
         let cssWidth: number
         let cssHeight: number
 
         if (size?.backingWidth && size?.backingHeight) {
-          // Use the explicitly provided CSS dimensions when backing dimensions are given
+          // Use the explicitly provided CSS dimensions
           cssWidth = reportedWidth
           cssHeight = reportedHeight
-          console.log(`[useWebviewFrames] Texture ${index} created:`)
-          console.log(`  - CSS dimensions: ${cssWidth}x${cssHeight}`)
-          console.log(`  - Backing dimensions: ${pageWidth}x${pageHeight}`)
-          console.log(`  - Texture size: ${dataTexture.image.width}x${dataTexture.image.height}`)
+          console.log(`[useWebviewFrames] Texture ${index} applied: CSS ${cssWidth}x${cssHeight}, backing ${pageWidth}x${pageHeight}`)
         } else {
-          // Fallback to DPR-based calculation when inferring
+          // Fallback to old calculation
           const dprBytes = Math.max(1, Math.round(reportedWidth * dpr)) * Math.max(1, Math.round(reportedHeight * dpr)) * 4
           cssWidth = byteLength === dprBytes ? Math.max(1, Math.round(pageWidth / dpr)) : pageWidth
           cssHeight = byteLength === dprBytes ? Math.max(1, Math.round(pageHeight / dpr)) : pageHeight
-          console.log(`[useWebviewFrames] Texture ${index} created (inferred): CSS ${cssWidth}x${cssHeight}, backing ${pageWidth}x${pageHeight}`)
         }
 
         if (onTextureUpdate) {
