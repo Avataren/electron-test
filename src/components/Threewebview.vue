@@ -289,9 +289,13 @@ const createPlanes = () => {
 const isResizing = ref(false)
 
 const handleResize = async () => {
+  console.log(`[Threewebview] ==================== RESIZE EVENT ====================`)
+  console.log(`[Threewebview] Window size: ${window.innerWidth}x${window.innerHeight}`)
+  console.log(`[Threewebview] isResizing: ${isResizing.value}, isTransitioning: ${store.isTransitioning}, isInitialLoading: ${isInitialLoading.value}`)
+
   // Prevent concurrent resize operations
   if (isResizing.value || store.isTransitioning || isInitialLoading.value) {
-    console.log('Skipping resize: ' +
+    console.log('[Threewebview] ⚠️  SKIPPING RESIZE: ' +
       (isResizing.value ? 'resize in progress' :
        store.isTransitioning ? 'transition in progress' :
        'initial loading in progress'))
@@ -302,9 +306,15 @@ const handleResize = async () => {
 
   try {
     const newPlaneConfig = onResize(pageAspect.value ?? undefined)
-    if (!newPlaneConfig) return
+    if (!newPlaneConfig) {
+      console.log('[Threewebview] ⚠️  onResize returned null')
+      return
+    }
 
     console.log(`[Threewebview] Resize: New plane config ${newPlaneConfig.width.toFixed(2)}x${newPlaneConfig.height.toFixed(2)}`)
+    if (renderer.value) {
+      console.log(`[Threewebview] Renderer after onResize: ${renderer.value.domElement.width}x${renderer.value.domElement.height}`)
+    }
 
     planes.forEach((plane) => {
       plane.geometry.dispose()
@@ -560,6 +570,20 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
 }
 
 const transition = async (targetIndex: number, type: TransitionType) => {
+  // Log current state before transition
+  console.log(`[Threewebview] ==================== STARTING TRANSITION ====================`)
+  console.log(`[Threewebview] Window size: ${window.innerWidth}x${window.innerHeight}`)
+  console.log(`[Threewebview] Canvas size: ${canvasRef.value?.width}x${canvasRef.value?.height}`)
+  console.log(`[Threewebview] Canvas client size: ${canvasRef.value?.clientWidth}x${canvasRef.value?.clientHeight}`)
+  if (renderer.value) {
+    console.log(`[Threewebview] Renderer size: ${renderer.value.domElement.width}x${renderer.value.domElement.height}`)
+    console.log(`[Threewebview] Renderer pixel ratio: ${renderer.value.getPixelRatio()}`)
+  }
+  if (camera.value) {
+    console.log(`[Threewebview] Camera frustum: left=${camera.value.left}, right=${camera.value.right}, top=${camera.value.top}, bottom=${camera.value.bottom}`)
+  }
+  console.log(`[Threewebview] ================================================================`)
+
   // Guard against multiple transitions, resize operations, and transitioning to current page
   if (store.isTransitioning || isResizing.value || targetIndex === store.currentIndex) {
     if (isResizing.value) {
@@ -690,6 +714,27 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
     // NOW set transitioning to false - after everything is truly complete
     store.setTransitioning(false)
+
+    // CRITICAL: Check if window was resized during transition
+    // If so, we need to update the renderer/camera/planes now
+    if (canvasRef.value && renderer.value) {
+      const currentRendererSize = { width: renderer.value.domElement.width, height: renderer.value.domElement.height }
+      const actualWindowSize = { width: window.innerWidth, height: window.innerHeight }
+      const dpr = window.devicePixelRatio || 1
+      const expectedRendererSize = {
+        width: Math.round(actualWindowSize.width * dpr),
+        height: Math.round(actualWindowSize.height * dpr)
+      }
+
+      if (currentRendererSize.width !== expectedRendererSize.width ||
+          currentRendererSize.height !== expectedRendererSize.height) {
+        console.log(`[Threewebview] ⚠️  Renderer size mismatch after transition!`)
+        console.log(`  - Renderer: ${currentRendererSize.width}x${currentRendererSize.height}`)
+        console.log(`  - Expected: ${expectedRendererSize.width}x${expectedRendererSize.height}`)
+        console.log(`  - Triggering resize to fix...`)
+        await handleResize()
+      }
+    }
   }
 }
 
@@ -728,6 +773,28 @@ const checkAllTexturesLoaded = () => {
     isInitialLoading.value = false
     console.log('🎉 All textures loaded, starting slideshow')
     scheduleRender()
+
+    // CRITICAL: Check if window was resized during initial loading
+    // If so, we need to update the renderer/camera/planes now
+    if (canvasRef.value && renderer.value) {
+      const currentRendererSize = { width: renderer.value.domElement.width, height: renderer.value.domElement.height }
+      const actualWindowSize = { width: window.innerWidth, height: window.innerHeight }
+      const dpr = window.devicePixelRatio || 1
+      const expectedRendererSize = {
+        width: Math.round(actualWindowSize.width * dpr),
+        height: Math.round(actualWindowSize.height * dpr)
+      }
+
+      if (currentRendererSize.width !== expectedRendererSize.width ||
+          currentRendererSize.height !== expectedRendererSize.height) {
+        console.log(`[Threewebview] ⚠️  Renderer size mismatch after initial loading!`)
+        console.log(`  - Renderer: ${currentRendererSize.width}x${currentRendererSize.height}`)
+        console.log(`  - Expected: ${expectedRendererSize.width}x${expectedRendererSize.height}`)
+        console.log(`  - Triggering resize to fix...`)
+        // Use setTimeout to avoid async issues in this function
+        setTimeout(() => handleResize(), 100)
+      }
+    }
 
     // CRITICAL: Disable ALL painting so we stop pushing textures until the
     // slideshow actually needs a new snapshot.

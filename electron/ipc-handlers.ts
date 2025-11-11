@@ -225,7 +225,11 @@ export class IPCHandlers {
       const bounds = this.windowManager.getContentBounds()
       if (!bounds) return
 
-      console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}, resizing offscreen windows`)
+      console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}`)
+
+      // Resize all offscreen windows to match the new window size
+      // This ensures captured frames match the BrowserView size
+      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
 
       // Resize offscreen windows to match the new window dimensions
       // This ensures that offscreen-rendered frames match the BrowserView size
