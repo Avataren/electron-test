@@ -108,17 +108,17 @@ export class IPCHandlers {
         return null
       }
 
-      // Calculate backing dimensions from bitmap size
-      // The bitmap is in BGRA format (4 bytes per pixel)
-      const bytesPerPixel = 4
-      const pixelCount = bitmap.length / bytesPerPixel
+      // Calculate actual bitmap dimensions from buffer size
+      // imageSize.getSize() returns CSS pixels, but bitmap contains physical pixels
+      // This is the same calculation used in OffscreenRenderer.ts
+      const bytesPerPixel = 4 // BGRA format
+      const actualPixelCount = bitmap.length / bytesPerPixel
+      const cssPixelCount = imageSize.width * imageSize.height
+      const scaleFactor = Math.sqrt(actualPixelCount / cssPixelCount)
+      const backingWidth = Math.round(imageSize.width * scaleFactor)
+      const backingHeight = Math.round(imageSize.height * scaleFactor)
 
-      // Try to determine actual dimensions from bitmap data
-      // imageSize from NativeImage should give us the actual pixel dimensions
-      const backingWidth = imageSize.width
-      const backingHeight = imageSize.height
-
-      console.log(`[IPCHandlers] Captured BrowserView ${index}: CSS ${bounds.width}x${bounds.height}, backing ${backingWidth}x${backingHeight}, bitmap bytes: ${bitmap.length}`)
+      console.log(`[IPCHandlers] Captured BrowserView ${index}: CSS ${bounds.width}x${bounds.height}, backing ${backingWidth}x${backingHeight}, bitmap bytes: ${bitmap.length}, scale factor: ${scaleFactor.toFixed(2)}`)
 
       // Return the bitmap with complete size information
       // Format must be 'raw' so applyFrameToTexture processes it as raw BGRA pixel data
@@ -128,8 +128,8 @@ export class IPCHandlers {
         size: {
           width: bounds.width,      // CSS pixels
           height: bounds.height,     // CSS pixels
-          backingWidth,              // Physical pixels
-          backingHeight              // Physical pixels
+          backingWidth,              // Physical pixels (calculated from bitmap size)
+          backingHeight              // Physical pixels (calculated from bitmap size)
         },
         format: 'raw'
       }
