@@ -1042,7 +1042,7 @@ onUnmounted(() => {
     <canvas
       ref="canvasRef"
       class="three-canvas"
-      :class="[{ 'setup-hidden': store.setupMode }, { visible: showCanvas } ]"
+      :class="[{ 'setup-hidden': store.setupMode }, { visible: showCanvas }, { 'no-transition': store.isTransitioning } ]"
     ></canvas>
 
     <!-- Indicator dots hidden during slideshow to avoid texture scale mismatch -->
@@ -1086,6 +1086,10 @@ onUnmounted(() => {
 
 .three-canvas.visible {
   opacity: 1;
+}
+
+.three-canvas.no-transition {
+  transition: none !important;
 }
 
 .three-canvas.setup-hidden {
