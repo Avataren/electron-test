@@ -714,6 +714,27 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
     // NOW set transitioning to false - after everything is truly complete
     store.setTransitioning(false)
+
+    // CRITICAL: Check if window was resized during transition
+    // If so, we need to update the renderer/camera/planes now
+    if (canvasRef.value && renderer.value) {
+      const currentRendererSize = { width: renderer.value.domElement.width, height: renderer.value.domElement.height }
+      const actualWindowSize = { width: window.innerWidth, height: window.innerHeight }
+      const dpr = window.devicePixelRatio || 1
+      const expectedRendererSize = {
+        width: Math.round(actualWindowSize.width * dpr),
+        height: Math.round(actualWindowSize.height * dpr)
+      }
+
+      if (currentRendererSize.width !== expectedRendererSize.width ||
+          currentRendererSize.height !== expectedRendererSize.height) {
+        console.log(`[Threewebview] ⚠️  Renderer size mismatch after transition!`)
+        console.log(`  - Renderer: ${currentRendererSize.width}x${currentRendererSize.height}`)
+        console.log(`  - Expected: ${expectedRendererSize.width}x${expectedRendererSize.height}`)
+        console.log(`  - Triggering resize to fix...`)
+        await handleResize()
+      }
+    }
   }
 }
 
@@ -752,6 +773,28 @@ const checkAllTexturesLoaded = () => {
     isInitialLoading.value = false
     console.log('🎉 All textures loaded, starting slideshow')
     scheduleRender()
+
+    // CRITICAL: Check if window was resized during initial loading
+    // If so, we need to update the renderer/camera/planes now
+    if (canvasRef.value && renderer.value) {
+      const currentRendererSize = { width: renderer.value.domElement.width, height: renderer.value.domElement.height }
+      const actualWindowSize = { width: window.innerWidth, height: window.innerHeight }
+      const dpr = window.devicePixelRatio || 1
+      const expectedRendererSize = {
+        width: Math.round(actualWindowSize.width * dpr),
+        height: Math.round(actualWindowSize.height * dpr)
+      }
+
+      if (currentRendererSize.width !== expectedRendererSize.width ||
+          currentRendererSize.height !== expectedRendererSize.height) {
+        console.log(`[Threewebview] ⚠️  Renderer size mismatch after initial loading!`)
+        console.log(`  - Renderer: ${currentRendererSize.width}x${currentRendererSize.height}`)
+        console.log(`  - Expected: ${expectedRendererSize.width}x${expectedRendererSize.height}`)
+        console.log(`  - Triggering resize to fix...`)
+        // Use setTimeout to avoid async issues in this function
+        setTimeout(() => handleResize(), 100)
+      }
+    }
 
     // CRITICAL: Disable ALL painting so we stop pushing textures until the
     // slideshow actually needs a new snapshot.
