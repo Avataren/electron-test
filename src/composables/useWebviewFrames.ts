@@ -6,7 +6,12 @@ import * as THREE from 'three'
 interface WebviewFrame {
   index: number
   buffer: ArrayBuffer | Uint8Array
-  size?: { width: number; height: number }
+  size?: {
+    width: number          // CSS/logical width
+    height: number         // CSS/logical height
+    backingWidth?: number  // Physical pixel width (optional)
+    backingHeight?: number // Physical pixel height (optional)
+  }
 }
 
 // Shape reported to onTextureUpdate: include both logical (css) and backing sizes
@@ -283,38 +288,55 @@ export function useWebviewFrames(
 
         logFrameStats(index, srcArr, reportedWidth, reportedHeight, format)
 
-        const reportedBytes = reportedWidth * reportedHeight * 4
-        const dprWidth = Math.max(1, Math.round(reportedWidth * dpr))
-        const dprHeight = Math.max(1, Math.round(reportedHeight * dpr))
-        const dprBytes = dprWidth * dprHeight * 4
-
         let initialWidth = 0
         let initialHeight = 0
 
-        if (byteLength === reportedBytes) {
-          initialWidth = reportedWidth
-          initialHeight = reportedHeight
-        } else if (byteLength === dprBytes) {
-          initialWidth = dprWidth
-          initialHeight = dprHeight
+        // If backing dimensions are provided, use them directly
+        if (size?.backingWidth && size?.backingHeight) {
+          console.log(`[useWebviewFrames] Using provided backing dimensions for ${index}: ${size.backingWidth}x${size.backingHeight}`)
+          initialWidth = size.backingWidth
+          initialHeight = size.backingHeight
+
+          // Verify the dimensions match the buffer size
+          const expectedBytes = initialWidth * initialHeight * 4
+          if (byteLength !== expectedBytes) {
+            console.warn(`[useWebviewFrames] ⚠️  Buffer size mismatch for ${index}: expected ${expectedBytes} bytes, got ${byteLength}`)
+            console.warn(`[useWebviewFrames] Will try to use dimensions anyway - mismatch may be due to rounding`)
+            // Continue anyway - the mismatch might be due to rounding in the scale factor calculation
+          }
         } else {
-          const inferredHeight = Math.max(1, Math.round(byteLength / (reportedWidth * 4)))
-          if (inferredHeight * reportedWidth * 4 === byteLength) {
+          // Fallback to inference when backing dimensions not provided
+          console.log(`[useWebviewFrames] No backing dimensions provided for ${index}, inferring from buffer size`)
+          const reportedBytes = reportedWidth * reportedHeight * 4
+          const dprWidth = Math.max(1, Math.round(reportedWidth * dpr))
+          const dprHeight = Math.max(1, Math.round(reportedHeight * dpr))
+          const dprBytes = dprWidth * dprHeight * 4
+
+          if (byteLength === reportedBytes) {
             initialWidth = reportedWidth
-            initialHeight = inferredHeight
+            initialHeight = reportedHeight
+          } else if (byteLength === dprBytes) {
+            initialWidth = dprWidth
+            initialHeight = dprHeight
           } else {
-            try {
-              _win.ipcRenderer?.send('frame-rejected', {
-                index,
-                reportedWidth,
-                reportedHeight,
-                byteLength,
-                dpr,
-              })
-            } catch (err) {
-              console.debug('[useWebviewFrames] failed to send frame-rejected ipc', err)
+            const inferredHeight = Math.max(1, Math.round(byteLength / (reportedWidth * 4)))
+            if (inferredHeight * reportedWidth * 4 === byteLength) {
+              initialWidth = reportedWidth
+              initialHeight = inferredHeight
+            } else {
+              try {
+                _win.ipcRenderer?.send('frame-rejected', {
+                  index,
+                  reportedWidth,
+                  reportedHeight,
+                  byteLength,
+                  dpr,
+                })
+              } catch (err) {
+                console.debug('[useWebviewFrames] failed to send frame-rejected ipc', err)
+              }
+              return true
             }
-            return true
           }
         }
 
@@ -327,10 +349,25 @@ export function useWebviewFrames(
         writeBGRAIntoTexture(dataTexture, srcArr, true)
         dataTexture.needsUpdate = true
 
-        const cssWidth =
-          byteLength === dprBytes ? Math.max(1, Math.round(pageWidth / dpr)) : pageWidth
-        const cssHeight =
-          byteLength === dprBytes ? Math.max(1, Math.round(pageHeight / dpr)) : pageHeight
+        // Determine CSS dimensions
+        let cssWidth: number
+        let cssHeight: number
+
+        if (size?.backingWidth && size?.backingHeight) {
+          // Use the explicitly provided CSS dimensions when backing dimensions are given
+          cssWidth = reportedWidth
+          cssHeight = reportedHeight
+          console.log(`[useWebviewFrames] Texture ${index} created:`)
+          console.log(`  - CSS dimensions: ${cssWidth}x${cssHeight}`)
+          console.log(`  - Backing dimensions: ${pageWidth}x${pageHeight}`)
+          console.log(`  - Texture size: ${dataTexture.image.width}x${dataTexture.image.height}`)
+        } else {
+          // Fallback to DPR-based calculation when inferring
+          const dprBytes = Math.max(1, Math.round(reportedWidth * dpr)) * Math.max(1, Math.round(reportedHeight * dpr)) * 4
+          cssWidth = byteLength === dprBytes ? Math.max(1, Math.round(pageWidth / dpr)) : pageWidth
+          cssHeight = byteLength === dprBytes ? Math.max(1, Math.round(pageHeight / dpr)) : pageHeight
+          console.log(`[useWebviewFrames] Texture ${index} created (inferred): CSS ${cssWidth}x${cssHeight}, backing ${pageWidth}x${pageHeight}`)
+        }
 
         if (onTextureUpdate) {
           onTextureUpdate(index, {

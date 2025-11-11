@@ -93,19 +93,48 @@ export class IPCHandlers {
 
     // Capture page from BrowserView directly
     ipcMain.handle('capture-browser-view', async (event, index: number) => {
-      const bitmap = await this.viewManager.capturePage(index)
-      if (!bitmap) {
+      const captureResult = await this.viewManager.capturePage(index)
+      if (!captureResult) {
         console.warn(`[IPCHandlers] Failed to capture BrowserView ${index}`)
         return null
       }
 
-      // Return the bitmap with size information
+      const { bitmap, size: imageSize } = captureResult
+
+      // Get the BrowserView bounds (CSS dimensions)
+      const bounds = await this.getBrowserViewSize(index)
+      if (!bounds) {
+        console.warn(`[IPCHandlers] Failed to get BrowserView bounds for ${index}`)
+        return null
+      }
+
+      // Calculate actual backing dimensions from bitmap buffer size
+      // image.getSize() returns CSS pixels, but toBitmap() returns physical pixels
+      // Use the same calculation as OffscreenRenderer to determine backing size
+      const bytesPerPixel = 4 // BGRA format
+      const actualPixelCount = bitmap.length / bytesPerPixel
+      const cssPixelCount = imageSize.width * imageSize.height
+      const scaleFactor = Math.sqrt(actualPixelCount / cssPixelCount)
+      const backingWidth = Math.round(imageSize.width * scaleFactor)
+      const backingHeight = Math.round(imageSize.height * scaleFactor)
+
+      console.log(`[IPCHandlers] Captured BrowserView ${index}:`)
+      console.log(`  - BrowserView bounds (CSS): ${bounds.width}x${bounds.height}`)
+      console.log(`  - Image size (CSS): ${imageSize.width}x${imageSize.height}`)
+      console.log(`  - Backing size (physical): ${backingWidth}x${backingHeight}`)
+      console.log(`  - Bitmap bytes: ${bitmap.length}, scale factor: ${scaleFactor.toFixed(2)}`)
+
+      // Return the bitmap with complete size information
       // Format must be 'raw' so applyFrameToTexture processes it as raw BGRA pixel data
-      const size = await this.getBrowserViewSize(index)
       return {
         index,
         buffer: bitmap,
-        size,
+        size: {
+          width: bounds.width,      // CSS pixels from BrowserView bounds
+          height: bounds.height,     // CSS pixels from BrowserView bounds
+          backingWidth,              // Physical pixels calculated from bitmap size
+          backingHeight              // Physical pixels calculated from bitmap size
+        },
         format: 'raw'
       }
     })
@@ -193,7 +222,11 @@ export class IPCHandlers {
       const bounds = this.windowManager.getContentBounds()
       if (!bounds) return
 
-      console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}, resizing offscreen windows`)
+      console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}`)
+
+      // Resize all offscreen windows to match the new window size
+      // This ensures captured frames match the BrowserView size
+      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
 
       // Notify renderer about the resize so it can handle its own resize logic
       // which includes devicePixelRatio calculations and texture updates
