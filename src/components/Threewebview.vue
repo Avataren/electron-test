@@ -819,6 +819,18 @@ const transition = async (targetIndex: number, type: TransitionType) => {
         await handleResize()
       }
     }
+
+    // Reduce offscreen work between transitions by disabling painting
+    // for the pages we temporarily enabled for this transition.
+    // They will be re-enabled right before the next transition.
+    try {
+      await disablePaintingForIndices([fromIndex, targetIndex])
+      console.info(
+        `[Threewebview] Disabled offscreen painting after transition for indices: ${fromIndex}, ${targetIndex}`,
+      )
+    } catch (err) {
+      console.warn('[Threewebview] Failed to disable offscreen painting after transition', err)
+    }
   }
 }
 
