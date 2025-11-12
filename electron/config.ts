@@ -53,10 +53,13 @@ function parseHumanDuration(input: unknown, fallbackMs: number): number {
         if (parts.every((n) => Number.isFinite(n))) {
           let seconds = 0
           if (parts.length === 3) {
-            const [h, m, s] = parts
+            const h = parts[0] ?? 0
+            const m = parts[1] ?? 0
+            const s = parts[2] ?? 0
             seconds = h * 3600 + m * 60 + s
           } else if (parts.length === 2) {
-            const [m, s] = parts
+            const m = parts[0] ?? 0
+            const s = parts[1] ?? 0
             seconds = m * 60 + s
           } else {
             // Single-part with colon present is unexpected; fallback
@@ -73,8 +76,11 @@ function parseHumanDuration(input: unknown, fallbackMs: number): number {
       let matched = false
       while ((match = re.exec(raw))) {
         matched = true
-        const value = parseFloat(match[1])
-        const unit = match[2].toLowerCase()
+        const valueStr = match[1]
+        const unitStr = match[2]
+        if (valueStr == null || unitStr == null) continue
+        const value = parseFloat(valueStr)
+        const unit = unitStr.toLowerCase()
         if (!isFinite(value)) continue
         if (unit === 'ms') totalMs += value
         else if (unit === 's') totalMs += value * 1000
