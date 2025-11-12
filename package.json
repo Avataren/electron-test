@@ -31,8 +31,7 @@
       "dist/**/*"
     ],
     "win": {
-      "target": ["nsis"],
-      "sign": null
+      "target": ["nsis"]
     }
   },
   "dependencies": {
