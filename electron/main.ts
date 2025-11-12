@@ -67,6 +67,27 @@ function initialize() {
 
   viewManager.setMainWindow(mainWindow)
   viewManager.createViews(defaultConfig.urls)
+
+  // Ensure clean shutdown when the main window is closed.
+  // Hidden offscreen BrowserWindows can keep the process alive in release,
+  // so proactively tear everything down here.
+  mainWindow.on('closed', () => {
+    try {
+      offscreenRenderer.cleanup()
+    } catch {}
+    try {
+      viewManager.cleanup()
+    } catch {}
+    try {
+      ipcHandlers.unregister()
+    } catch {}
+    try {
+      windowManager?.destroy()
+    } catch {}
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
 }
 
 // Quit when all windows are closed, except on macOS
