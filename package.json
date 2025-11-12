@@ -31,7 +31,8 @@
       "dist/**/*"
     ],
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "forceCodeSigning": false
     }
   },
   "dependencies": {
