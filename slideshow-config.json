@@ -9,19 +9,19 @@
   "transitions": [
     {
       "name": "pixelate",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "rain",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "slice",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "ripple",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "flip",
@@ -33,7 +33,7 @@
     },
     {
       "name": "swirl",
-      "enabled": false
+      "enabled": true
     }
   ]
 }
