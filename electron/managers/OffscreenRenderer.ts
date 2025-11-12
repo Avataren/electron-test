@@ -196,10 +196,19 @@ export class OffscreenRenderer {
 
     let ab: ArrayBuffer | null = null
     try {
-      ab = frame.buffer.buffer.slice(
-        frame.buffer.byteOffset,
-        frame.buffer.byteOffset + frame.buffer.byteLength,
-      )
+      const buffer = frame.buffer.buffer
+      if (buffer instanceof SharedArrayBuffer) {
+        // Convert SharedArrayBuffer to ArrayBuffer
+        ab = new ArrayBuffer(frame.buffer.byteLength)
+        new Uint8Array(ab).set(
+          new Uint8Array(buffer, frame.buffer.byteOffset, frame.buffer.byteLength)
+        )
+      } else {
+        ab = buffer.slice(
+          frame.buffer.byteOffset,
+          frame.buffer.byteOffset + frame.buffer.byteLength,
+        )
+      }
     } catch (err) {
       console.error('[OffscreenRenderer] failed to extract ArrayBuffer from frame buffer', { index, err })
       ab = null
@@ -277,6 +286,16 @@ export class OffscreenRenderer {
     }, minInterval)
 
     this.sendTimers.set(index, timer)
+  }
+
+  private writeFrameToSharedBuffer(
+    index: number,
+    frame: { buffer: Buffer; size: { width: number; height: number } }
+  ): SharedArrayBuffer {
+    const sab = new SharedArrayBuffer(frame.buffer.byteLength)
+    const view = new Uint8Array(sab)
+    view.set(new Uint8Array(frame.buffer.buffer, frame.buffer.byteOffset, frame.buffer.byteLength))
+    return sab
   }
 
   private dispatchFrame(index: number): void {

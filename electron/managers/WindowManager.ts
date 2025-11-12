@@ -53,9 +53,10 @@ export class WindowManager {
         }
       })
 
-      this.window.webContents.once('did-frame-finish-load', () => {
-        this.openDetachedDevTools(this.window?.webContents)
-      })
+      // Only auto-open DevTools in development mode (not on release builds)
+      // this.window.webContents.once('did-frame-finish-load', () => {
+      //   this.openDetachedDevTools(this.window?.webContents)
+      // })
       this.window.loadURL(this.viteDevServerUrl)
     } else {
       this.ensureAppProtocol()
