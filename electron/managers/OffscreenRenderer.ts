@@ -170,19 +170,11 @@ export class OffscreenRenderer {
           return true
         }
 
-        console.warn(
-          '[OffscreenRenderer] postMessage rejected SharedArrayBuffer payload, falling back to ArrayBuffer',
-          { index },
-        )
+        // SharedArrayBuffer not supported, fall back to ArrayBuffer silently
         this.sharedBufferDeliveryBlocked = true
       } catch (err) {
-        if (!this.sharedBufferDeliveryBlocked) {
-          console.warn('[OffscreenRenderer] failed to send SharedArrayBuffer frame, falling back', {
-            index,
-            err,
-          })
-          this.sharedBufferDeliveryBlocked = true
-        }
+        // SharedArrayBuffer not supported, fall back to ArrayBuffer silently
+        this.sharedBufferDeliveryBlocked = true
       }
     }
 
@@ -228,20 +220,12 @@ export class OffscreenRenderer {
         })
 
         if (!posted && !this.arrayBufferPostMessageBlocked) {
-          console.warn(
-            '[OffscreenRenderer] postMessage rejected ArrayBuffer payload, falling back to ipc send',
-            { index },
-          )
+          // ArrayBuffer transfer not supported, fall back to IPC send silently
           this.arrayBufferPostMessageBlocked = true
         }
       } catch (err) {
-        if (!this.arrayBufferPostMessageBlocked) {
-          console.warn('[OffscreenRenderer] failed to send ArrayBuffer frame, falling back to ipc send', {
-            index,
-            err,
-          })
-          this.arrayBufferPostMessageBlocked = true
-        }
+        // ArrayBuffer transfer not supported, fall back to IPC send silently
+        this.arrayBufferPostMessageBlocked = true
       }
     }
 
@@ -459,9 +443,9 @@ export class OffscreenRenderer {
 
   /** Resize all offscreen windows to the provided dimensions. */
   resizeAll(width: number, height: number): void {
+    console.info(`[OffscreenRenderer] resizeAll -> ${width}x${height}`)
     this.windows.forEach((win) => {
       if (!win.isDestroyed()) {
-        console.info(`[OffscreenRenderer] resizeAll -> ${width}x${height}`)
         win.setSize(width, height)
       }
     })

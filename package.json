@@ -32,7 +32,7 @@
     ],
     "win": {
       "target": ["nsis"],
-      "sign": null
+      "verifyUpdateCodeSignature": false
     }
   },
   "dependencies": {

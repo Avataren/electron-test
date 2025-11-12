@@ -9,7 +9,7 @@
   "transitions": [
     {
       "name": "pixelate",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "rain",
@@ -29,7 +29,7 @@
     },
     {
       "name": "glitch",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "swirl",

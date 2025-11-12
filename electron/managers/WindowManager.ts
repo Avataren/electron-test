@@ -36,6 +36,10 @@ export class WindowManager {
         sandbox: true,
       },
     })
+
+    // Increase maxListeners to avoid warnings when using multiple DevTools windows
+    this.window.setMaxListeners(20)
+
     this.window.webContents.on('did-finish-load', () => {
       this.sendToRenderer('main-process-message', new Date().toLocaleString())
     })

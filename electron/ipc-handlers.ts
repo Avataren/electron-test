@@ -11,6 +11,7 @@ export class IPCHandlers {
   private readonly windowManager: WindowManager
   private readonly onSetupComplete: () => void
   private offscreenResizeHandler: (() => void) | null = null
+  private resizeDebounceTimer: NodeJS.Timeout | null = null
 
   constructor(
     config: AppConfig,
@@ -226,25 +227,29 @@ export class IPCHandlers {
 
     // Create new resize handler
     this.offscreenResizeHandler = () => {
-      const bounds = this.windowManager.getContentBounds()
-      if (!bounds) return
+      // Clear any pending resize
+      if (this.resizeDebounceTimer) {
+        clearTimeout(this.resizeDebounceTimer)
+      }
 
-      console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}`)
+      // Debounce resize to avoid rapid repeated calls
+      this.resizeDebounceTimer = setTimeout(() => {
+        const bounds = this.windowManager.getContentBounds()
+        if (!bounds) return
 
-      // Resize all offscreen windows to match the new window size
-      // This ensures captured frames match the BrowserView size
-      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
+        console.info(`[IPCHandlers] Window resized to ${bounds.width}x${bounds.height}`)
 
-      // Resize offscreen windows to match the new window dimensions
-      // This ensures that offscreen-rendered frames match the BrowserView size
-      this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
+        // Resize all offscreen windows to match the new window size
+        // This ensures captured frames match the BrowserView size
+        this.offscreenRenderer.resizeAll(bounds.width, bounds.height)
 
-      // Notify renderer about the resize so it can handle its own resize logic
-      // which includes devicePixelRatio calculations and texture updates
-      this.windowManager.sendToRenderer('main-window-resized', {
-        width: bounds.width,
-        height: bounds.height
-      })
+        // Notify renderer about the resize so it can handle its own resize logic
+        // which includes devicePixelRatio calculations and texture updates
+        this.windowManager.sendToRenderer('main-window-resized', {
+          width: bounds.width,
+          height: bounds.height
+        })
+      }, 100) // 100ms debounce
     }
 
     // Attach to window resize event
@@ -260,6 +265,12 @@ export class IPCHandlers {
         mainWindow.off('resize', this.offscreenResizeHandler)
       }
       this.offscreenResizeHandler = null
+    }
+
+    // Clean up debounce timer
+    if (this.resizeDebounceTimer) {
+      clearTimeout(this.resizeDebounceTimer)
+      this.resizeDebounceTimer = null
     }
 
     ipcMain.removeHandler('get-webview-urls')
