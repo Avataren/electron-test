@@ -134,17 +134,15 @@ export class PixelateTransition extends BaseTransition {
         }
       }
 
-      // CRITICAL: Set the uniform to the current progress value BEFORE incrementing.
-      // This ensures the first rendered frame uses progress=0, preventing a flash
-      // of the destination image before the transition interpolation starts.
+      // CRITICAL: Clamp progress to 1.0 to ensure the final frame renders with alpha=0
+      // This prevents flicker by making the transition fully transparent before cleanup
       const progressU = (material.uniforms as any).progress
       if (progressU && typeof progressU.value !== 'undefined') {
-        progressU.value = this.progress
+        progressU.value = Math.min(this.progress, 1.0)
       }
     }
 
-    // Increment progress AFTER setting the uniform so the current frame uses
-    // the previous progress value
+    // Increment progress AFTER setting the uniform
     this.progress += 1 / 60 / this.duration
 
     return this.progress >= 1.0

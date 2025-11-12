@@ -88,16 +88,15 @@ export class SwirlTransition extends BaseTransition {
 
     const material = this.planeMesh.material as THREE.ShaderMaterial
     if (material.uniforms) {
-      // Set the uniform to the current progress value BEFORE incrementing
-      // to ensure the first frame renders with progress=0
+      // Clamp progress to 1.0 to ensure final frame renders with alpha=0 (no flicker)
       const progressU = (material.uniforms as any).progress
       if (progressU && typeof progressU.value !== 'undefined') {
-        progressU.value = this.progress
+        progressU.value = Math.min(this.progress, 1.0)
       }
     }
 
-    // Scale down as it swirls (using current progress before increment)
-    const scale = 1 - this.progress * 0.3
+    // Scale down as it swirls (using clamped progress for final frame)
+    const scale = 1 - Math.min(this.progress, 1.0) * 0.3
     this.planeMesh.scale.set(scale, scale, 1)
 
     // Increment progress after setting the uniform

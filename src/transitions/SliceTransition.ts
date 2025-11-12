@@ -63,6 +63,15 @@ export class SliceTransition extends BaseTransition {
   update(): boolean {
     this.slices.forEach((slice) => {
       slice.mesh.position.x += slice.velocity.x * slice.direction
+
+      // Fade out as slices move off-screen (start fading at x=12, fully transparent at x=15)
+      const absX = Math.abs(slice.mesh.position.x)
+      if (absX > 12) {
+        const fadeStart = 12
+        const fadeEnd = 15
+        const fadeProgress = Math.min(1, (absX - fadeStart) / (fadeEnd - fadeStart))
+        ;(slice.mesh.material as THREE.MeshBasicMaterial).opacity = 1.0 - fadeProgress
+      }
     })
 
     return this.slices.every((s) => Math.abs(s.mesh.position.x) > 15)

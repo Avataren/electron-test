@@ -89,11 +89,10 @@ export class RippleTransition extends BaseTransition {
 
     const material = this.planeMesh.material as THREE.ShaderMaterial
     if (material.uniforms) {
-      // Set the uniform to the current progress value BEFORE incrementing
-      // to ensure the first frame renders with progress=0
+      // Clamp progress to 1.0 to ensure final frame renders with alpha=0 (no flicker)
       const progressU = (material.uniforms as any).progress
       if (progressU && typeof progressU.value !== 'undefined') {
-        progressU.value = this.progress
+        progressU.value = Math.min(this.progress, 1.0)
       }
     }
 

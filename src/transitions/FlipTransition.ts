@@ -39,7 +39,9 @@ export class FlipTransition extends BaseTransition {
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
     }
 
-    const easedProgress = easeInOutCubic(this.progress)
+    // Clamp progress to 1.0 for rendering to prevent flicker on final frame
+    const renderProgress = Math.min(this.progress, 1.0)
+    const easedProgress = easeInOutCubic(renderProgress)
 
     // Rotate the plane in 3D space
     this.planeMesh.rotation.y = easedProgress * Math.PI

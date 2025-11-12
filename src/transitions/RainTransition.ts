@@ -98,11 +98,13 @@ export class RainTransition extends BaseTransition {
       if (fragment.mesh.position.y < -3) {
         const fadeStart = -3
         const fadeEnd = -8
+        // Calculate fade progress (0 at fadeStart, 1 at fadeEnd)
         const fadeProgress = Math.max(
           0,
           Math.min(1, (fragment.mesh.position.y - fadeStart) / (fadeEnd - fadeStart)),
         )
-        ;(fragment.mesh.material as THREE.MeshBasicMaterial).opacity = fadeProgress
+        // Fade OUT as fragments fall (opacity goes from 1 to 0)
+        ;(fragment.mesh.material as THREE.MeshBasicMaterial).opacity = 1.0 - fadeProgress
       }
     })
 
