@@ -634,14 +634,24 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   let shouldRestoreBrowserView = false
 
   try {
+    // CRITICAL: Capture SOURCE texture FIRST while it's still visible
+    // This prevents source view from needing to be temporarily shown
+    console.log(`[Threewebview] Capturing source texture from visible view ${fromIndex}`)
+    const sourceCapture = await captureTexturesForTransition([fromIndex])
+
+    if (!sourceCapture) {
+      console.error('[Threewebview] Failed to capture source texture')
+      store.setTransitioning(false)
+      return
+    }
+
     if (shouldRunVisualTransition) {
       shouldRestoreBrowserView = true
 
-      // CRITICAL: Hide browser views FIRST, before capturing
-      // This prevents any browser view from being visible during capture
+      // Hide browser views now that source is captured
       await hideBrowserViews()
 
-      // CRITICAL: Show and prepare canvas BEFORE capturing textures
+      // Show and prepare canvas BEFORE capturing target texture
       // This ensures when target view is temporarily shown for capture,
       // it's hidden behind the opaque canvas
       if (renderer.value && canvasRef.value) {
@@ -699,7 +709,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       }
 
       // Show canvas with source content to hide any browser view flashing
-      // Temporarily show fromPlane so we have something to render
+      // Show fromPlane with already-captured source texture
       fromPlane.visible = true
       targetPlane.visible = false
       showCanvas.value = true
@@ -709,15 +719,16 @@ const transition = async (targetIndex: number, type: TransitionType) => {
         renderer.value.render(scene.value, camera.value)
       }
 
-      // Small delay to ensure canvas is painted and browser views are fully hidden
+      // Small delay to ensure canvas is painted
       await new Promise(resolve => setTimeout(resolve, 32))
     }
 
-    // NOW capture textures - target view may be temporarily shown but hidden behind canvas
-    const captureSuccess = await captureTexturesForTransition([fromIndex, targetIndex])
+    // NOW capture TARGET texture - it will be temporarily shown but hidden behind canvas
+    console.log(`[Threewebview] Capturing target texture ${targetIndex} behind canvas`)
+    const targetCapture = await captureTexturesForTransition([targetIndex])
 
-    if (!captureSuccess) {
-      console.error('[Threewebview] Aborting transition due to texture capture failure')
+    if (!targetCapture) {
+      console.error('[Threewebview] Failed to capture target texture')
       store.setTransitioning(false)
       return
     }
