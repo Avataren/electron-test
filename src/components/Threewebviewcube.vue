@@ -154,7 +154,14 @@ const handleWebviewFrame = (_event: any, data: WebviewFrame) => {
 
   // Create image from buffer
   const view = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-  const blob = new Blob([view], { type: 'image/jpeg' })
+
+  // Ensure we have a regular ArrayBuffer for Blob (not SharedArrayBuffer)
+  // Always create a copy to ensure it's a regular ArrayBuffer
+  const regularBuffer = new ArrayBuffer(view.byteLength)
+  const regularView = new Uint8Array(regularBuffer)
+  regularView.set(view)
+
+  const blob = new Blob([regularView], { type: 'image/jpeg' })
   const url = URL.createObjectURL(blob)
 
   const img = new Image()
