@@ -15,6 +15,7 @@ export class ViewManager {
   private currentDevToolsViewId: number | null = null
   private devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 }
   private controlBarVisible = true
+  private viewDevToolsWindow: BrowserWindow | null = null
 
   constructor(config: AppConfig) {
     this.config = config
@@ -112,7 +113,8 @@ export class ViewManager {
       }
 
       this.setBounds(view, bounds)
-      view.setAutoResize({ width: true, height: true })
+      // Note: setAutoResize() removed to rely on manual resize handling via updateBounds()
+      // This prevents conflicts between auto-resize and manual bound updates during setup mode
       view.webContents.loadURL(url)
 
       this.views.set(index, view)
