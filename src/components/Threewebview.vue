@@ -498,44 +498,10 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
 
   const unique = Array.from(new Set(indices))
 
-  console.log(`[Threewebview] Capturing textures from BrowserView for transition:`, unique)
+  console.log(`[Threewebview] Using offscreen window textures for transition:`, unique)
 
-  let allCaptured = true
-
-  // Capture directly from BrowserView instead of using offscreen windows
-  // This ensures perfect synchronization with what the user sees
-  for (const index of unique) {
-    try {
-      const captureData = await window.ipcRenderer.invoke('capture-browser-view', index)
-
-      if (!captureData) {
-        console.error(`[Threewebview] ❌ Failed to capture BrowserView ${index}`)
-        allCaptured = false
-        continue
-      }
-
-      // Apply the captured frame to the texture
-      const applied = applyFrameToTexture(captureData)
-
-      if (applied) {
-        console.log(`[Threewebview] ✓ Successfully captured and applied BrowserView ${index} to texture`)
-        textureUpdateTimestamps.value.set(index, Date.now())
-      } else {
-        console.error(`[Threewebview] ❌ Failed to apply captured frame for index ${index}`)
-        allCaptured = false
-      }
-    } catch (err) {
-      console.error(`[Threewebview] ❌ Error capturing BrowserView ${index}:`, err)
-      allCaptured = false
-    }
-  }
-
-  if (!allCaptured) {
-    console.error('[Threewebview] Not all textures were captured successfully')
-    return false
-  }
-
-  // Validate that textures are properly initialized and have valid dimensions
+  // Use textures that are already continuously updated by offscreen windows
+  // This avoids IPC calls that can hang and cause stuck transitions
   const expectedWidth = canvasRef.value?.clientWidth || window.innerWidth
   const expectedHeight = canvasRef.value?.clientHeight || window.innerHeight
 
@@ -558,14 +524,16 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
     }
 
     // Log texture dimensions for debugging
-    console.debug(`[Threewebview] Texture ${index} dimensions:`, {
+    console.log(`[Threewebview] ✓ Texture ${index} ready for transition:`, {
       textureWidth: image.width,
       textureHeight: image.height,
       expectedWidth,
-      expectedHeight
+      expectedHeight,
+      hasData: !!image.data
     })
   }
 
+  console.log(`[Threewebview] ✓ All textures ready for transition`)
   return true
 }
 
@@ -634,9 +602,8 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   let shouldRestoreBrowserView = false
 
   try {
-    // CRITICAL: Capture SOURCE texture FIRST while it's still visible
-    // This prevents source view from needing to be temporarily shown
-    console.log(`[Threewebview] Capturing source texture from visible view ${fromIndex}`)
+    // Validate SOURCE texture - using continuously updated offscreen window texture
+    console.log(`[Threewebview] Validating source texture from offscreen window ${fromIndex}`)
     const sourceCapture = await captureTexturesForTransition([fromIndex])
 
     if (!sourceCapture) {
@@ -651,9 +618,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       // Hide browser views now that source is captured
       await hideBrowserViews()
 
-      // Show and prepare canvas BEFORE capturing target texture
-      // This ensures when target view is temporarily shown for capture,
-      // it's hidden behind the opaque canvas
+      // Show and prepare canvas to provide smooth visual transition
       if (renderer.value && canvasRef.value) {
         const currentWidth = window.innerWidth
         const currentHeight = window.innerHeight
@@ -723,8 +688,8 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       await new Promise(resolve => setTimeout(resolve, 32))
     }
 
-    // NOW capture TARGET texture - it will be temporarily shown but hidden behind canvas
-    console.log(`[Threewebview] Capturing target texture ${targetIndex} behind canvas`)
+    // Validate TARGET texture - using continuously updated offscreen window texture
+    console.log(`[Threewebview] Validating target texture ${targetIndex} from offscreen window`)
     const targetCapture = await captureTexturesForTransition([targetIndex])
 
     if (!targetCapture) {
