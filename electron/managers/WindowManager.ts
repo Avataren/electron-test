@@ -67,7 +67,8 @@ export class WindowManager {
       this.ensureAppProtocol()
         .then(() => {
           if (this.isValid()) {
-            void this.window!.loadURL('app://-/index.html')
+            // Load root so SPA router path is '/'
+            void this.window!.loadURL('app://-/')
           }
         })
         .catch((err) => {

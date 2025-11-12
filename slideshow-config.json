@@ -35,5 +35,7 @@
       "name": "swirl",
       "enabled": true
     }
-  ]
+  ],
+  "transition-webpage-fps": 10,
+  "slideshow-page-duration": 10000
 }

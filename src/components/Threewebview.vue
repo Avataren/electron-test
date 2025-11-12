@@ -1023,22 +1023,23 @@ onUnmounted(() => {
 <template>
 
   <div class="webview-3d-container">
-    <div v-if="store.setupMode && urls.length > 0" class="setup-control-bar">
+    <div v-if="store.setupMode" class="setup-control-bar">
       <div class="setup-content">
         <div class="setup-info">
           <h2>Setup Mode</h2>
-          <p>Page {{ store.setupIndex + 1 }} of {{ urls.length }} - Log in to your pages above</p>
+          <p v-if="urls.length > 0">Page {{ store.setupIndex + 1 }} of {{ urls.length }} - Log in to your pages above</p>
+          <p v-else>No pages configured. Using defaults or empty list.</p>
         </div>
         <div class="setup-controls">
-          <button class="control-btn" @click="prevSetupPage" title="Previous page">
+          <button class="control-btn" @click="prevSetupPage" title="Previous page" :disabled="urls.length === 0">
             <span>←</span>
           </button>
           <button class="control-btn finish-btn" @click="finishSetup">Start Slideshow</button>
-          <button class="control-btn" @click="nextSetupPage" title="Next page">
+          <button class="control-btn" @click="nextSetupPage" title="Next page" :disabled="urls.length === 0">
             <span>→</span>
           </button>
         </div>
-        <div class="setup-dots">
+        <div class="setup-dots" v-if="urls.length > 0">
           <div
             v-for="(_, index) in urls.length"
             :key="index"

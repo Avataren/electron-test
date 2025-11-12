@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { app } from 'electron'
 
 export interface TransitionConfig {
@@ -10,6 +10,10 @@ export interface TransitionConfig {
 export interface SlideshowConfig {
   urls: string[]
   transitions: TransitionConfig[]
+  // Optional advanced settings loaded from slideshow-config.json
+  // Hyphenated keys match the JSON file exactly
+  'transition-webpage-fps'?: number
+  'slideshow-page-duration'?: number
 }
 
 export interface AppConfig {
@@ -49,6 +53,9 @@ const defaultSlideshowConfig: SlideshowConfig = {
     { name: 'glitch', enabled: false },
     { name: 'swirl', enabled: false },
   ],
+  // Sensible defaults when not provided in user config
+  'transition-webpage-fps': 10,
+  'slideshow-page-duration': 10000,
 }
 
 // Load slideshow config from file or use defaults
@@ -62,6 +69,18 @@ function loadSlideshowConfig(): SlideshowConfig {
       console.log(`[Config] Loading slideshow config from: ${userConfigPath}`)
       const configData = readFileSync(userConfigPath, 'utf-8')
       return JSON.parse(configData) as SlideshowConfig
+    }
+
+    // Next, look for a file placed in the installed app root (next to the executable)
+    // This is populated via electron-builder extraFiles
+    if (app.isPackaged) {
+      const appRoot = dirname(app.getPath('exe'))
+      const packagedRootConfig = join(appRoot, 'slideshow-config.json')
+      if (existsSync(packagedRootConfig)) {
+        console.log(`[Config] Loading slideshow config from app root: ${packagedRootConfig}`)
+        const configData = readFileSync(packagedRootConfig, 'utf-8')
+        return JSON.parse(configData) as SlideshowConfig
+      }
     }
 
     // Fall back to project root (for development)
@@ -92,12 +111,18 @@ export const defaultConfig: AppConfig = {
     controlBarHeight: 120,
   },
   timing: {
-    rotationInterval: 10000,
+    // Use slideshow-config.json value if provided
+    rotationInterval:
+      (slideshowConfig['slideshow-page-duration'] &&
+        Math.max(0, Number(slideshowConfig['slideshow-page-duration']))) || 10000,
     refreshInterval: 30000,
     transitionDuration: 2500,
   },
   rendering: {
-    frameRate: 10,
+    // Use slideshow-config.json value if provided
+    frameRate:
+      (slideshowConfig['transition-webpage-fps'] &&
+        Math.max(0, Number(slideshowConfig['transition-webpage-fps']))) || 10,
     jpegQuality: 85,
   },
 }

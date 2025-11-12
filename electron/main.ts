@@ -59,12 +59,14 @@ const ipcHandlers = new IPCHandlers(
 
 function initialize() {
   const preloadPath = path.join(__dirname, 'preload.js')
+  // Register IPC handlers before loading the renderer to avoid race conditions
+  // where the renderer invokes handlers (e.g., get-webview-urls) before they're registered.
+  ipcHandlers.register()
+
   const mainWindow = windowManager.createWindow(preloadPath)
 
   viewManager.setMainWindow(mainWindow)
   viewManager.createViews(defaultConfig.urls)
-
-  ipcHandlers.register()
 }
 
 // Quit when all windows are closed, except on macOS

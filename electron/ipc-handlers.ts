@@ -36,6 +36,11 @@ export class IPCHandlers {
       return this.config.transitions
     })
 
+    // Expose timing configuration (rotation/refresh/transition durations) to renderer
+    ipcMain.handle('get-timing-config', () => {
+      return this.config.timing
+    })
+
     ipcMain.handle('show-setup-view', (event, index: number) => {
       this.viewManager.showView(index)
     })
@@ -275,6 +280,7 @@ export class IPCHandlers {
 
     ipcMain.removeHandler('get-webview-urls')
     ipcMain.removeHandler('get-transition-config')
+    ipcMain.removeHandler('get-timing-config')
     ipcMain.removeHandler('show-setup-view')
     ipcMain.removeHandler('finish-setup')
     ipcMain.removeHandler('reload-webview')

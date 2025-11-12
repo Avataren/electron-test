@@ -30,6 +30,12 @@
       "dist-electron/**/*",
       "dist/**/*"
     ],
+    "extraFiles": [
+      {
+        "from": "slideshow-config.json",
+        "to": "."
+      }
+    ],
     "win": {
       "target": ["nsis"],
       "verifyUpdateCodeSignature": false
