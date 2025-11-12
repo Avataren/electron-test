@@ -25,7 +25,7 @@
     },
     {
       "name": "flip",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "glitch",

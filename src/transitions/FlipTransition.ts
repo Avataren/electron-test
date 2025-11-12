@@ -2,9 +2,10 @@ import * as THREE from 'three'
 import { BaseTransition } from './BaseTransition'
 
 export class FlipTransition extends BaseTransition {
+  private pivotGroup: THREE.Group | null = null
   private planeMesh: THREE.Mesh | null = null
   private progress = 0
-  private readonly duration = 2.5
+  private readonly duration = 1.6
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig
@@ -16,44 +17,50 @@ export class FlipTransition extends BaseTransition {
     texture.colorSpace = THREE.SRGBColorSpace
     texture.needsUpdate = true
 
+    // Only render the front face so the old page disappears past 90°.
     const material = new THREE.MeshBasicMaterial({
       map: texture,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
       transparent: true,
       depthTest: false,
       depthWrite: false,
     })
 
+    // Create a pivot at the LEFT edge of the page to mimic a page turn.
+    // The incoming plane is centered at planePosition; its left edge is at x - width/2.
+    this.pivotGroup = new THREE.Group()
+    this.pivotGroup.position.set(planePosition.x - width / 2, planePosition.y, planePosition.z + 0.001)
+    this.pivotGroup.renderOrder = 1000
+    this.scene.add(this.pivotGroup)
+
     this.planeMesh = new THREE.Mesh(geometry, material)
-    this.planeMesh.position.set(planePosition.x, planePosition.y, planePosition.z)
-    this.planeMesh.renderOrder = 1000
-    this.scene.add(this.planeMesh)
+    // Offset the page so its LEFT edge sits at the group's origin (hinge).
+    this.planeMesh.position.set(width / 2, 0, 0)
+    this.planeMesh.renderOrder = 1001
+    this.pivotGroup.add(this.planeMesh)
     this.progress = 0
   }
 
   update(): boolean {
-    if (!this.planeMesh) return true
+    if (!this.pivotGroup || !this.planeMesh) return true
 
     // Create easing function for smooth animation
     const easeInOutCubic = (t: number): number => {
       return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
     }
 
-    // Clamp progress to 1.0 for rendering to prevent flicker on final frame
+    // Clamp progress to 1.0 for rendering
     const renderProgress = Math.min(this.progress, 1.0)
-    const easedProgress = easeInOutCubic(renderProgress)
+    const eased = easeInOutCubic(renderProgress)
 
-    // Rotate the plane in 3D space
-    this.planeMesh.rotation.y = easedProgress * Math.PI
+    // Rotate the page around the hinge (left edge).
+    const angle = eased * Math.PI
+    this.pivotGroup.rotation.y = angle
 
-    // Scale down slightly during flip for depth effect
-    const scale = 1 - easedProgress * 0.2 + (easedProgress > 0.5 ? (easedProgress - 0.5) * 0.4 : 0)
-    this.planeMesh.scale.set(scale, scale, 1)
-
-    // Fade out when edge-on
+    // Subtle shading to enhance the ortho look: darken slightly as the page turns.
     const material = this.planeMesh.material as THREE.MeshBasicMaterial
-    const opacity = Math.abs(Math.cos(easedProgress * Math.PI))
-    material.opacity = opacity
+    const darken = 0.15 + 0.85 * Math.abs(Math.cos(angle))
+    material.opacity = darken
 
     // Increment progress after applying transformations
     this.progress += 1 / 60 / this.duration
@@ -62,8 +69,8 @@ export class FlipTransition extends BaseTransition {
   }
 
   cleanup(): void {
-    if (this.planeMesh) {
-      this.scene.remove(this.planeMesh)
+    if (this.pivotGroup && this.planeMesh) {
+      this.scene.remove(this.pivotGroup)
       this.planeMesh.geometry.dispose()
 
       const material = this.planeMesh.material as THREE.MeshBasicMaterial
@@ -71,6 +78,8 @@ export class FlipTransition extends BaseTransition {
       material.dispose()
 
       this.planeMesh = null
+      this.pivotGroup.clear()
+      this.pivotGroup = null
     }
     this.progress = 0
   }
