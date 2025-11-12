@@ -111,13 +111,13 @@ export class OffscreenRenderer {
 
       // Debug logs: include index, reported size, and bitmap byte length so
       // we can diagnose DPR/backing-store mismatches and GPU copy errors.
-      console.debug('[OffscreenRenderer] Paint event:', {
-        index,
-        cssSize: size,
-        backingSize: { width: backingWidth, height: backingHeight },
-        bitmapBytes: bitmap.length,
-        scaleFactor: scaleFactor.toFixed(2)
-      })
+      // console.debug('[OffscreenRenderer] Paint event:', {
+      //   index,
+      //   cssSize: size,
+      //   backingSize: { width: backingWidth, height: backingHeight },
+      //   bitmapBytes: bitmap.length,
+      //   scaleFactor: scaleFactor.toFixed(2)
+      // })
 
       try {
         // Coalesce: store latest frame as pending and schedule a send that
