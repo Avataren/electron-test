@@ -66,7 +66,6 @@ export class RippleTransition extends BaseTransition {
 
           // Fade out as ripples expand
           float alpha = 1.0 - progress;
-          alpha *= smoothstep(0.0, 0.2, progress); // Fade in quickly
 
           gl_FragColor = vec4(color.rgb, alpha);
         }
