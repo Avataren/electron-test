@@ -229,16 +229,14 @@ describe('ViewManager devtools handling', () => {
   })
 
   it('resizes BrowserViews when docked devtools consume window space', () => {
-    const config: AppConfig = {
-      urls: ['https://example.com'],
-      window: { width: 1000, height: 800, controlBarHeight: 100 },
-      timing: {
-        rotationInterval: 1000,
-        refreshInterval: 1000,
-        transitionDuration: 100,
-      },
-      rendering: { frameRate: 30, jpegQuality: 80 },
-    }
+  const config: AppConfig = {
+    urls: ['https://example.com'],
+    window: { width: 800, height: 600, controlBarHeight: 0 },
+    timing: { rotationInterval: 10000, refreshInterval: 60000, transitionDuration: 300 },
+    rendering: { frameRate: 30, jpegQuality: 0.8 },
+    transitions: [],
+  }
+
 
     const devToolsContents = new FakeDevToolsWebContents()
     const mainBounds = { x: 0, y: 0, width: 1000, height: 800 }

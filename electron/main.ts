@@ -18,10 +18,10 @@ protocol.registerSchemesAsPrivileged([
       standard: true,
       secure: true,
       supportFetchAPI: true,
-      corsEnabled: true,
       stream: true,
-    },
-  },
+      corsEnabled: true
+    }
+  }
 ])
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
@@ -73,7 +73,7 @@ app.on('window-all-closed', () => {
     offscreenRenderer.cleanup()
     viewManager.cleanup()
     ipcHandlers.unregister()
-    windowManager.destroy()
+    windowManager?.destroy()
     app.quit()
   }
 })
