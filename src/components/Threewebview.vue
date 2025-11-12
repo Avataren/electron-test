@@ -19,6 +19,13 @@ const textureUpdateTimestamps = ref<Map<number, number>>(new Map())
 const isInitialLoading = ref(true) // NEW: Track if we're in initial loading phase
 const showCanvas = ref(false)
 
+interface TransitionConfig {
+  name: string
+  enabled: boolean
+}
+
+const transitionConfig = ref<TransitionConfig[]>([])
+
 const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
 let transitionManager: TransitionManager | null = null
@@ -268,7 +275,7 @@ const createPlanes = () => {
   })
 
   transitionManager = transitionsEnabled
-    ? new TransitionManager(scene.value, textures, planeConfig)
+    ? new TransitionManager(scene.value, textures, planeConfig, transitionConfig.value)
     : null
 
   scheduleRender()
@@ -602,6 +609,15 @@ const transition = async (targetIndex: number, type: TransitionType) => {
   let shouldRestoreBrowserView = false
 
   try {
+    // CRITICAL: Enable painting at 10fps for both source and target pages before transition
+    // This ensures we capture fresh, up-to-date textures for the transition
+    console.log(`[Threewebview] Enabling painting for transition pages: ${fromIndex}, ${targetIndex}`)
+    await enablePaintingForIndices([fromIndex, targetIndex])
+
+    // Wait for offscreen windows to paint fresh frames at 10fps
+    // This ensures the captured textures are current, not stale
+    await new Promise(resolve => setTimeout(resolve, 250))
+
     // Validate SOURCE texture - using continuously updated offscreen window texture
     console.log(`[Threewebview] Validating source texture from offscreen window ${fromIndex}`)
     const sourceCapture = await captureTexturesForTransition([fromIndex])
@@ -911,6 +927,18 @@ const handleDotClick = (index: number) => {
 
 onMounted(async () => {
   await loadUrls()
+
+  // Load transition configuration
+  try {
+    const config = await window.ipcRenderer.invoke('get-transition-config')
+    if (config && Array.isArray(config)) {
+      transitionConfig.value = config
+      console.log('[Threewebview] Loaded transition config:', config)
+    }
+  } catch (error) {
+    console.error('[Threewebview] Failed to load transition config:', error)
+  }
+
   initScene()
   createPlanes()
   scheduleRender()

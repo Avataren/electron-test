@@ -1,0 +1,39 @@
+{
+  "urls": [
+    "https://www.testufo.com/",
+    "https://cubed.no",
+    "https://www.github.com",
+    "https://www.wikipedia.org",
+    "https://news.ycombinator.com"
+  ],
+  "transitions": [
+    {
+      "name": "pixelate",
+      "enabled": true
+    },
+    {
+      "name": "rain",
+      "enabled": false
+    },
+    {
+      "name": "slice",
+      "enabled": false
+    },
+    {
+      "name": "ripple",
+      "enabled": false
+    },
+    {
+      "name": "flip",
+      "enabled": false
+    },
+    {
+      "name": "glitch",
+      "enabled": false
+    },
+    {
+      "name": "swirl",
+      "enabled": false
+    }
+  ]
+}

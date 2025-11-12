@@ -31,6 +31,10 @@ export class IPCHandlers {
       return this.config.urls
     })
 
+    ipcMain.handle('get-transition-config', () => {
+      return this.config.transitions
+    })
+
     ipcMain.handle('show-setup-view', (event, index: number) => {
       this.viewManager.showView(index)
     })
@@ -259,6 +263,7 @@ export class IPCHandlers {
     }
 
     ipcMain.removeHandler('get-webview-urls')
+    ipcMain.removeHandler('get-transition-config')
     ipcMain.removeHandler('show-setup-view')
     ipcMain.removeHandler('finish-setup')
     ipcMain.removeHandler('reload-webview')
