@@ -37,5 +37,5 @@
     }
   ],
   "transition-webpage-fps": 10,
-  "slideshow-page-duration": 10000
+  "slideshow-page-duration": "1m"
 }
