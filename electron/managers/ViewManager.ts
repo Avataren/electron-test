@@ -106,7 +106,7 @@ export class ViewManager {
       // Set background color to match your app background
       view.setBackgroundColor('#000000')
 
-      if (index === 0 && this.mainWindow && this.isDev) {
+      if (index === 0 && this.mainWindow && this.isDev && this.config.devtools?.autoOpen) {
         view.webContents.once('did-finish-load', () => {
           this.showDevToolsForView(view)
         })
@@ -184,7 +184,7 @@ export class ViewManager {
     if (view) {
       this.mainWindow.addBrowserView(view)
       this.updateBounds()
-      if (this.isDev) {
+      if (this.isDev && this.config.devtools?.autoOpen) {
         this.showDevToolsForView(view)
       }
     }

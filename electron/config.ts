@@ -14,6 +14,9 @@ export interface SlideshowConfig {
   // Hyphenated keys match the JSON file exactly
   'transition-webpage-fps'?: number
   'slideshow-page-duration'?: number | string
+  // When true, automatically open DevTools for views in dev.
+  // Default is false to avoid spawning extra windows during transitions.
+  'auto-open-devtools'?: boolean
 }
 
 export interface AppConfig {
@@ -32,6 +35,10 @@ export interface AppConfig {
   rendering: {
     frameRate: number
     jpegQuality: number
+  }
+  devtools?: {
+    /** If true (and in dev), auto-open DevTools for BrowserViews */
+    autoOpen: boolean
   }
 }
 
@@ -194,5 +201,8 @@ export const defaultConfig: AppConfig = {
       (slideshowConfig['transition-webpage-fps'] &&
         Math.max(0, Number(slideshowConfig['transition-webpage-fps']))) || 10,
     jpegQuality: 85,
+  },
+  devtools: {
+    autoOpen: Boolean(slideshowConfig['auto-open-devtools']) || false,
   },
 }
