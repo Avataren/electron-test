@@ -7,6 +7,8 @@ interface Fragment {
   mesh: THREE.Mesh
   velocity: THREE.Vector3
   rotationSpeed: THREE.Vector3
+  startY: number
+  targetY: number
 }
 
 export class RainTransition extends BaseTransition {
@@ -14,6 +16,7 @@ export class RainTransition extends BaseTransition {
   private readonly gridCols = 20
   private readonly gridRows = 10
   private sharedTexture: THREE.Texture | null = null
+  private elapsedSeconds = 0
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width: planeWidth, height: planeHeight } = this.planeConfig
@@ -82,33 +85,39 @@ export class RainTransition extends BaseTransition {
         )
 
         this.scene.add(fragment)
-        this.fragments.push({ mesh: fragment, velocity, rotationSpeed })
+        const startY = fragment.position.y
+        // Ensure each fragment ends well below the view by t=1; vary slightly for natural look
+        const overshoot = 2 + Math.random() * 3 // 2..5 units past threshold
+        const targetY = -8 - overshoot
+        this.fragments.push({ mesh: fragment, velocity, rotationSpeed, startY, targetY })
       }
     }
   }
 
   update(): boolean {
+    // Advance elapsed time and compute normalized progress [0,1]
+    this.elapsedSeconds += 1 / 60
+    const t = Math.min(1, this.elapsedSeconds / this.durationSeconds)
+
+    // Ease for natural acceleration: accelerate downwards at start
+    const easeInCubic = (x: number) => x * x * x
+    const p = easeInCubic(t)
+
     this.fragments.forEach((fragment) => {
-      fragment.velocity.y -= 0.015
-      fragment.mesh.position.add(fragment.velocity)
+      // Interpolate Y towards the target by eased progress
+      const newY = fragment.startY + (fragment.targetY - fragment.startY) * p
+      fragment.mesh.position.y = newY
+
+      // Simple rotation evolution over time for organic feel
       fragment.mesh.rotation.x += fragment.rotationSpeed.x
       fragment.mesh.rotation.y += fragment.rotationSpeed.y
       fragment.mesh.rotation.z += fragment.rotationSpeed.z
 
-      if (fragment.mesh.position.y < -3) {
-        const fadeStart = -3
-        const fadeEnd = -8
-        // Calculate fade progress (0 at fadeStart, 1 at fadeEnd)
-        const fadeProgress = Math.max(
-          0,
-          Math.min(1, (fragment.mesh.position.y - fadeStart) / (fadeEnd - fadeStart)),
-        )
-        // Fade OUT as fragments fall (opacity goes from 1 to 0)
-        ;(fragment.mesh.material as THREE.MeshBasicMaterial).opacity = 1.0 - fadeProgress
-      }
+      // Fade out over the duration
+      ;(fragment.mesh.material as THREE.MeshBasicMaterial).opacity = 1.0 - t
     })
 
-    return this.fragments.every((f) => f.mesh.position.y < -8)
+    return t >= 1
   }
 
   cleanup(): void {

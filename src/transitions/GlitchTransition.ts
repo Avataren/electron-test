@@ -4,7 +4,6 @@ import { BaseTransition } from './BaseTransition'
 export class GlitchTransition extends BaseTransition {
   private planeMesh: THREE.Mesh | null = null
   private progress = 0
-  private readonly duration = 2.5
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig
@@ -127,7 +126,7 @@ export class GlitchTransition extends BaseTransition {
     }
 
     // Increment progress after setting the uniform
-    this.progress += 1 / 60 / this.duration
+    this.progress += 1 / 60 / this.durationSeconds
 
     return this.progress >= 1.0
   }

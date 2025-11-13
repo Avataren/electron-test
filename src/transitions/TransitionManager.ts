@@ -25,16 +25,21 @@ export class TransitionManager {
   private readonly textures: THREE.Texture[]
   private readonly planeConfig: PlaneConfig
   private readonly transitionTypes: TransitionType[]
+  private readonly durationSeconds: number
 
   constructor(
     scene: THREE.Scene,
     textures: THREE.Texture[],
     planeConfig: PlaneConfig,
-    transitionConfig?: TransitionConfig[]
+    transitionConfig?: TransitionConfig[],
+    durationSeconds?: number,
   ) {
     this.scene = scene
     this.textures = textures
     this.planeConfig = planeConfig
+    this.durationSeconds = typeof durationSeconds === 'number' && isFinite(durationSeconds)
+      ? Math.max(0.000001, durationSeconds)
+      : 1
 
     // Build list of enabled transitions from config
     if (transitionConfig && transitionConfig.length > 0) {
@@ -63,29 +68,29 @@ export class TransitionManager {
 
     switch (type) {
       case 'rain':
-        this.currentTransition = new RainTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new RainTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       case 'slice':
-        this.currentTransition = new SliceTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new SliceTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       case 'pixelate':
-        this.currentTransition = new PixelateTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new PixelateTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       case 'ripple':
-        this.currentTransition = new RippleTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new RippleTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       case 'flip':
-        this.currentTransition = new FlipTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new FlipTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       case 'glitch':
-        this.currentTransition = new GlitchTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new GlitchTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       case 'swirl':
-        this.currentTransition = new SwirlTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new SwirlTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break
       default:
         // Fall back to pixelate if unknown type
-        this.currentTransition = new PixelateTransition(this.scene, this.textures, this.planeConfig)
+        this.currentTransition = new PixelateTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
     }
 
     if (this.currentTransition) {

@@ -5,11 +5,19 @@ export abstract class BaseTransition {
   protected scene: THREE.Scene
   protected textures: THREE.Texture[]
   protected planeConfig: PlaneConfig
+  /** Duration in seconds for duration-based transitions */
+  protected durationSeconds: number
 
-  constructor(scene: THREE.Scene, textures: THREE.Texture[], planeConfig: PlaneConfig) {
+  constructor(
+    scene: THREE.Scene,
+    textures: THREE.Texture[],
+    planeConfig: PlaneConfig,
+    durationSeconds: number = 1,
+  ) {
     this.scene = scene
     this.textures = textures
     this.planeConfig = planeConfig
+    this.durationSeconds = Math.max(0.000001, durationSeconds)
   }
 
   abstract create(fromIndex: number, planePosition: THREE.Vector3): void

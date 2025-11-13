@@ -17,6 +17,8 @@ export interface SlideshowConfig {
   // When true, automatically open DevTools for views in dev.
   // Default is false to avoid spawning extra windows during transitions.
   'auto-open-devtools'?: boolean
+  // Human-readable transition duration like '1s', '750ms', '2.5s'
+  'transition-duration'?: number | string
 }
 
 export interface AppConfig {
@@ -132,6 +134,7 @@ const defaultSlideshowConfig: SlideshowConfig = {
   // Sensible defaults when not provided in user config
   'transition-webpage-fps': 10,
   'slideshow-page-duration': '10s',
+  'transition-duration': '1s',
 }
 
 // Load slideshow config from file or use defaults
@@ -193,7 +196,11 @@ export const defaultConfig: AppConfig = {
       10000,
     ),
     refreshInterval: 30000,
-    transitionDuration: 2500,
+    // Global transition duration (ms) for duration-based transitions
+    transitionDuration: parseHumanDuration(
+      slideshowConfig['transition-duration'],
+      1000,
+    ),
   },
   rendering: {
     // Use slideshow-config.json value if provided

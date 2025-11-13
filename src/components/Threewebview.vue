@@ -34,6 +34,9 @@ let renderStatCounter = 0
 let animationFrameId: number | null = null
 let needsRender = false
 
+// Default transition duration if none provided by main (seconds)
+let transitionDurationSeconds = 1
+
 const transitionsEnabled = true
 
 const { scene, camera, renderer, initScene, onResize, dispose, FRUSTUM_HEIGHT, DISTANCE } =
@@ -275,8 +278,15 @@ const createPlanes = () => {
   })
 
   transitionManager = transitionsEnabled
-    ? new TransitionManager(scene.value, textures, planeConfig, transitionConfig.value)
+    ? new TransitionManager(
+        scene.value,
+        textures,
+        planeConfig,
+        transitionConfig.value,
+        transitionDurationSeconds,
+      )
     : null
+  console.log(`[Threewebview] Transition duration (s): ${transitionDurationSeconds}`)
 
   scheduleRender()
 }
@@ -949,6 +959,17 @@ onMounted(async () => {
     }
   } catch (error) {
     console.error('[Threewebview] Failed to load transition config:', error)
+  }
+
+  // Load timing config to get transition duration (ms)
+  try {
+    const timing = await window.ipcRenderer.invoke('get-timing-config')
+    const ms = Number(timing?.transitionDuration)
+    if (Number.isFinite(ms) && ms > 0) {
+      transitionDurationSeconds = ms / 1000
+    }
+  } catch (err) {
+    // Ignore and use default
   }
 
   initScene()

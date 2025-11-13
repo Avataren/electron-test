@@ -37,6 +37,7 @@
     }
   ],
   "transition-webpage-fps": 10,
-  "slideshow-page-duration": "1m",
-  "auto-open-devtools": false
+  "slideshow-page-duration": "2s",
+  "auto-open-devtools": false,
+  "transition-duration": "10s"
 }
