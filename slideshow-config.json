@@ -13,36 +13,36 @@
     },
     {
       "name": "pixelate",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "rain",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "slice",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "ripple",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "flip",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "glitch",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "swirl",
-      "enabled": false
+      "enabled": true
     }
   ],
   "transition-webpage-fps": 10,
   "slideshow-page-duration": "2s",
-  "auto-open-devtools": true,
+  "auto-open-devtools": false,
   "transition-duration": "3s"
 }
 
