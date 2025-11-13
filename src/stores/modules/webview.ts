@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 
 // Define TransitionType locally to avoid import issues
-type TransitionType = 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
+type TransitionType = 'curtain' | 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
 
 export const useWebviewStore = defineStore('webview', () => {
   const currentIndex = ref(0)
@@ -14,6 +14,7 @@ export const useWebviewStore = defineStore('webview', () => {
 
   // All available transition types
   const transitionTypes: TransitionType[] = [
+    'curtain',
     'rain',
     'slice',
     'pixelate',

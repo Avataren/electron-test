@@ -708,7 +708,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       }
 
       // Small delay to ensure canvas is painted
-      await new Promise(resolve => setTimeout(resolve, 32))
+      await new Promise(resolve => setTimeout(resolve, 64))
 
       // Now that the canvas is visibly presenting the source content, hide BrowserViews
       await hideBrowserViews()
@@ -805,7 +805,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       // Reattach BrowserView first so there's always content underneath the canvas
       await showBrowserView(store.currentIndex)
       // Give the BrowserView a moment to attach and paint
-      await new Promise(resolve => setTimeout(resolve, 16))
+      await new Promise(resolve => setTimeout(resolve, 64))
       // Now hide the canvas to avoid a black gap between layers
       showCanvas.value = false
     }

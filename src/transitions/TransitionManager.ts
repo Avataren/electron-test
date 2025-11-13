@@ -7,10 +7,11 @@ import { RippleTransition } from './RippleTransition'
 import { FlipTransition } from './FlipTransition'
 import { GlitchTransition } from './GlitchTransition'
 import { SwirlTransition } from './SwirlTransition'
+import { CurtainTransition } from './CurtainTransition'
 import type { PlaneConfig } from '../utils/geometry'
 
 // Inline type to avoid import issues
-type TransitionType = 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
+type TransitionType = 'curtain' | 'rain' | 'slice' | 'pixelate' | 'ripple' | 'flip' | 'glitch' | 'swirl'
 
 interface TransitionConfig {
   name: string
@@ -67,6 +68,9 @@ export class TransitionManager {
     this.cleanup()
 
     switch (type) {
+      case 'curtain':
+        this.currentTransition = new CurtainTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
+        break
       case 'rain':
         this.currentTransition = new RainTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
         break

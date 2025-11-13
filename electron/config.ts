@@ -123,6 +123,7 @@ const defaultSlideshowConfig: SlideshowConfig = {
     'https://news.ycombinator.com',
   ],
   transitions: [
+    { name: 'curtain', enabled: true },
     { name: 'pixelate', enabled: true },
     { name: 'rain', enabled: false },
     { name: 'slice', enabled: false },

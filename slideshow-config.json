@@ -8,36 +8,41 @@
   ],
   "transitions": [
     {
-      "name": "pixelate",
+      "name": "curtain",
       "enabled": true
+    },
+    {
+      "name": "pixelate",
+      "enabled": false
     },
     {
       "name": "rain",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "slice",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "ripple",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "flip",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "glitch",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "swirl",
-      "enabled": true
+      "enabled": false
     }
   ],
   "transition-webpage-fps": 10,
   "slideshow-page-duration": "2s",
-  "auto-open-devtools": false,
-  "transition-duration": "2s"
+  "auto-open-devtools": true,
+  "transition-duration": "3s"
 }
+
