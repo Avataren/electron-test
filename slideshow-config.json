@@ -39,5 +39,5 @@
   "transition-webpage-fps": 10,
   "slideshow-page-duration": "2s",
   "auto-open-devtools": false,
-  "transition-duration": "3s"
+  "transition-duration": "2s"
 }

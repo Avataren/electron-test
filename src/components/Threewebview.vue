@@ -641,10 +641,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     if (shouldRunVisualTransition) {
       shouldRestoreBrowserView = true
 
-      // Hide browser views now that source is captured
-      await hideBrowserViews()
-
-      // Show and prepare canvas to provide smooth visual transition
+      // Show and prepare canvas to provide smooth visual transition BEFORE hiding BrowserViews
       if (renderer.value && canvasRef.value) {
         const currentWidth = window.innerWidth
         const currentHeight = window.innerHeight
@@ -712,6 +709,9 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
       // Small delay to ensure canvas is painted
       await new Promise(resolve => setTimeout(resolve, 32))
+
+      // Now that the canvas is visibly presenting the source content, hide BrowserViews
+      await hideBrowserViews()
     }
 
     // Validate TARGET texture - using continuously updated offscreen window texture
@@ -802,8 +802,12 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     })
   } finally {
     if (shouldRestoreBrowserView) {
-      showCanvas.value = false
+      // Reattach BrowserView first so there's always content underneath the canvas
       await showBrowserView(store.currentIndex)
+      // Give the BrowserView a moment to attach and paint
+      await new Promise(resolve => setTimeout(resolve, 16))
+      // Now hide the canvas to avoid a black gap between layers
+      showCanvas.value = false
     }
 
     // NOW set transitioning to false - after everything is truly complete
