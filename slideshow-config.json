@@ -1,10 +1,9 @@
 {
   "urls": [
-    "https://www.testufo.com/",
-    "https://cubed.no",
-    "https://www.github.com",
-    "https://www.wikipedia.org",
-    "https://news.ycombinator.com"
+    "https://clevio.no/aktuelt/",
+    "https://portal.azure.com/#@clevio.no/dashboard/arm/subscriptions/6304f6f2-19a2-4649-a034-da3b0beeb9ca/resourcegroups/dashboards/providers/microsoft.portal/dashboards/9e6eeafd-afce-42a1-8dd5-f0039a6460c7",
+    "https://portal.azure.com/#@clevio.no/dashboard/arm/subscriptions/6304f6f2-19a2-4649-a034-da3b0beeb9ca/resourcegroups/dashboards/providers/microsoft.portal/dashboards/614de912-9d3d-4681-aeb3-eabbb2f3913a",
+    "https://portal.azure.com/#@clevio.no/dashboard/arm/subscriptions/6304f6f2-19a2-4649-a034-da3b0beeb9ca/resourcegroups/dashboards/providers/microsoft.portal/dashboards/9bb4b56d-d4d2-463d-8058-13e6ec84c0cc"
   ],
   "transitions": [
     {
@@ -41,7 +40,7 @@
     }
   ],
   "transition-webpage-fps": 10,
-  "slideshow-page-duration": "2s",
+  "slideshow-page-duration": "10s",
   "auto-open-devtools": false,
   "transition-duration": "3s"
 }

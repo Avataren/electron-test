@@ -33,6 +33,9 @@ const win: any = window
 let renderStatCounter = 0
 let animationFrameId: number | null = null
 let needsRender = false
+// Resize overlay state to prevent visible BrowserView flicker during window resize
+let resizeOverlayActive = false
+let resizeSettleTimer: number | null = null
 
 // Default transition duration if none provided by main (seconds)
 let transitionDurationSeconds = 1
@@ -321,6 +324,23 @@ const handleResize = async () => {
 
   isResizing.value = true
 
+  // Show a stable canvas overlay and hide BrowserViews while resizing to
+  // prevent rapid page flicker. Overlay is removed after resize settles.
+  try {
+    if (!resizeOverlayActive && !store.setupMode) {
+      resizeOverlayActive = true
+      // Ensure current plane is visible under the overlay
+      planes.forEach((plane, i) => (plane.visible = i === store.currentIndex))
+      showCanvas.value = true
+      if (renderer.value && scene.value && camera.value) {
+        renderer.value.render(scene.value, camera.value)
+      }
+      await hideBrowserViews()
+    }
+  } catch (err) {
+    console.warn('[Threewebview] Failed to activate resize overlay', err)
+  }
+
   try {
     const newPlaneConfig = onResize(pageAspect.value ?? undefined)
     if (!newPlaneConfig) {
@@ -342,56 +362,35 @@ const handleResize = async () => {
       transitionManager.updatePlaneConfig(newPlaneConfig)
     }
 
-    // Capture fresh textures from all BrowserViews at the new size
-    try {
-      console.log('[Threewebview] Capturing textures from all BrowserViews after resize')
-
-      const allIndices = Array.from({ length: planes.length }, (_, i) => i)
-
-      // Capture all BrowserViews at the new size
-      for (const index of allIndices) {
-        try {
-          const captureData = await window.ipcRenderer.invoke('capture-browser-view', index)
-
-          if (!captureData) {
-            console.warn(`[Threewebview] Failed to capture BrowserView ${index} after resize`)
-            continue
-          }
-
-          const applied = applyFrameToTexture(captureData)
-
-          if (applied) {
-            console.log(`[Threewebview] ✓ Updated texture ${index} after resize`)
-            textureUpdateTimestamps.value.set(index, Date.now())
-          } else {
-            console.warn(`[Threewebview] Failed to apply texture ${index} after resize`)
-          }
-        } catch (err) {
-          console.error(`[Threewebview] Error capturing BrowserView ${index} after resize:`, err)
-        }
-      }
-
-      // Force render update
-      textures.forEach(texture => {
-        texture.needsUpdate = true
-      })
-
-      // Log final texture dimensions for debugging
-      const firstTexture = textures[0]
-      if (firstTexture) {
-        const texImage = (firstTexture as any).image
-        if (texImage?.width && texImage?.height) {
-          console.log(`[Threewebview] Resize complete. Final texture dimensions: ${texImage.width}x${texImage.height}`)
-        }
-      }
-    } catch (err) {
-      console.warn('[Threewebview] Resize error:', err)
-    }
+    // Do NOT attach BrowserViews during resize (prevents visible flicker).
+    // Offscreen windows are resized in main and will stream new frames
+    // that update DataTextures via webview-frame events.
+    // Force a render so the resized planes/camera are shown immediately,
+    // and rely on incoming frames to refine texture resolution.
+    textures.forEach((texture) => {
+      texture.needsUpdate = true
+    })
   } catch (err) {
     console.error('[Threewebview] Fatal resize error:', err)
   } finally {
     isResizing.value = false
     scheduleRender()
+
+    // Debounce removal of the overlay until resize settles
+    if (resizeSettleTimer) {
+      clearTimeout(resizeSettleTimer)
+    }
+    resizeSettleTimer = window.setTimeout(async () => {
+      try {
+        await showBrowserView(store.currentIndex)
+        await new Promise((r) => setTimeout(r, 64))
+      } catch (err) {
+        console.warn('[Threewebview] Failed restoring BrowserView after resize', err)
+      } finally {
+        showCanvas.value = false
+        resizeOverlayActive = false
+      }
+    }, 200)
   }
 }
 
