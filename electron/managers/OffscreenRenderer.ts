@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import type { InputEvent } from 'electron'
 import type { AppConfig } from '../config'
 import { WindowManager } from './WindowManager'
 
@@ -59,8 +60,16 @@ export class OffscreenRenderer {
 
     console.info(`[OffscreenRenderer] Creating offscreen windows at ${windowWidth}x${windowHeight}`)
 
+    // Anchor offscreen windows to the same display as the main window
+    // so they inherit the same device scale factor (DPR). This avoids
+    // mismatches where the primary display uses a different scale.
+    const mainWin = this.windowManager.getWindow()
+    const mainBounds = mainWin && !mainWin.isDestroyed() ? mainWin.getBounds() : null
+
     urls.forEach((url, index) => {
       const offscreenWin = new BrowserWindow({
+        // Position on top of the main window's display to adopt its scale factor
+        ...(mainBounds ? { x: mainBounds.x, y: mainBounds.y } : {}),
         width: windowWidth,
         height: windowHeight,
         show: false,
@@ -130,7 +139,10 @@ export class OffscreenRenderer {
             width: size.width,
             height: size.height,
             backingWidth,
-            backingHeight
+            backingHeight,
+            // Provide the scaleFactor so the renderer can detect DPR mismatches
+            // (e.g., when windows are on different displays) and log/adjust.
+            scaleFactor
           } as any
         })
 
@@ -385,6 +397,13 @@ export class OffscreenRenderer {
 
       try {
         window.webContents.setFrameRate(this.config.rendering.frameRate)
+        // Force a full repaint so we get a fresh frame even if the page
+        // is otherwise idle and would not emit a 'paint' event by itself.
+        try {
+          ;(window.webContents as any).invalidate?.()
+        } catch (_err) {
+          // Best-effort; invalidate may not be typed/available in some envs
+        }
       } catch (err) {
         console.warn('[OffscreenRenderer] setFrameRate failed on enable', { index, err })
       }
@@ -492,5 +511,19 @@ export class OffscreenRenderer {
 
   getWindows(): Map<number, BrowserWindow> {
     return this.windows
+  }
+
+  /**
+   * Forward a synthesized input event to the offscreen window with the given index.
+   * Safely no-ops if the window is missing or destroyed.
+   */
+  forwardInputEvent(index: number, evt: InputEvent): void {
+    const win = this.windows.get(index)
+    if (!win || win.isDestroyed()) return
+    try {
+      win.webContents.sendInputEvent(evt as any)
+    } catch (err) {
+      console.warn('[OffscreenRenderer] failed to forward input event', { index, err })
+    }
   }
 }

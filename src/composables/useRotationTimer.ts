@@ -4,20 +4,31 @@ import { ref, onUnmounted } from 'vue'
 const ROTATION_INTERVAL = 10000
 const REFRESH_INTERVAL = 30000
 
-export function useRotationTimer(onRotate: () => void, onRefresh: () => void) {
+export function useRotationTimer(
+  onRotate: () => void,
+  onRefresh: () => void,
+  opts?: { enableRefresh?: boolean }
+) {
   const rotationTimer = ref<number | null>(null)
   const refreshTimer = ref<number | null>(null)
 
   let rotationInterval = ROTATION_INTERVAL
   let refreshInterval = REFRESH_INTERVAL
 
+  const options = opts || {}
+
   const applyTimers = () => {
     // Clear any existing timers before starting new ones
     if (rotationTimer.value !== null) clearInterval(rotationTimer.value)
-    if (refreshTimer.value !== null) clearInterval(refreshTimer.value)
+    if (refreshTimer.value !== null) {
+      clearInterval(refreshTimer.value)
+      refreshTimer.value = null
+    }
 
     rotationTimer.value = window.setInterval(onRotate, rotationInterval)
-    refreshTimer.value = window.setInterval(onRefresh, refreshInterval)
+    if (options.enableRefresh !== false) {
+      refreshTimer.value = window.setInterval(onRefresh, refreshInterval)
+    }
   }
 
   const startTimers = () => {

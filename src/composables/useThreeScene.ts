@@ -56,7 +56,11 @@ export function useThreeScene(canvasRef: Ref<HTMLCanvasElement | null>) {
     camera.value.bottom = -halfHeight
     camera.value.updateProjectionMatrix()
 
+    // Ensure renderer size and devicePixelRatio stay in sync with the window.
+    // This is critical when moving the window between monitors with different
+    // scale factors to avoid subtle texture-to-page misalignment.
     renderer.value.setSize(window.innerWidth, window.innerHeight)
+    renderer.value.setPixelRatio(window.devicePixelRatio)
 
     return calculatePlaneSize(
       {

@@ -19,11 +19,16 @@ export interface SlideshowConfig {
   'auto-open-devtools'?: boolean
   // Human-readable transition duration like '1s', '750ms', '2.5s'
   'transition-duration'?: number | string
+  // When true, use a lightweight mode with a single BrowserView and no
+  // offscreen renderers or visual transitions. Only the current view navigates.
+  'performance-mode'?: boolean
 }
 
 export interface AppConfig {
   urls: string[]
   transitions: TransitionConfig[]
+  /** Enable lightweight single-view mode without offscreen renderers */
+  performanceMode?: boolean
   window: {
     width: number
     height: number
@@ -185,6 +190,7 @@ const slideshowConfig = loadSlideshowConfig()
 export const defaultConfig: AppConfig = {
   urls: slideshowConfig.urls,
   transitions: slideshowConfig.transitions,
+  performanceMode: Boolean(slideshowConfig['performance-mode']) || false,
   window: {
     width: 1920,
     height: 1080,

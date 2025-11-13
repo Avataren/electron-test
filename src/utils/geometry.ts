@@ -13,15 +13,14 @@ export interface CameraConfig {
 export const VIEWPORT_ASPECT = 16 / 9
 
 export function calculatePlaneSize(camera: CameraConfig, _contentAspect?: number): PlaneConfig {
-  // For orthographic projection, the plane should fill the entire frustum
-  // to ensure textures match the viewport exactly without pillarboxing
+  // Fill the entire frustum to match BrowserView bounds exactly.
+  // This avoids scale mismatches and popping when the BrowserView is shown.
   const { frustumHeight, aspect } = camera
   const frustumWidth = frustumHeight * aspect
 
-  // Plane fills the entire visible area - no pillarboxing/letterboxing
   return {
     width: frustumWidth,
-    height: frustumHeight
+    height: frustumHeight,
   }
 }
 

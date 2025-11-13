@@ -1,4 +1,5 @@
 import { BrowserView, BrowserWindow } from 'electron'
+import path from 'node:path'
 import type { Rectangle, Size, WebContents } from 'electron'
 import type { AppConfig } from '../config'
 
@@ -92,12 +93,15 @@ export class ViewManager {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
 
     const bounds = this.mainWindow.getContentBounds()
+    const appRoot = process.env.APP_ROOT || ''
+    const preloadPath = path.join(appRoot, 'electron', 'view-preload.js')
 
     urls.forEach((url, index) => {
       const view = new BrowserView({
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
+          preload: preloadPath,
           // Ensure consistent rendering with offscreen windows
           zoomFactor: 1.0,
         },
@@ -198,6 +202,32 @@ export class ViewManager {
     })
   }
 
+  navigate(index: number, url: string): void {
+    const view = this.views.get(index)
+    if (!view) {
+      console.warn(`[ViewManager] navigate: view ${index} not found`)
+      return
+    }
+    try {
+      view.webContents.loadURL(url)
+    } catch (err) {
+      console.warn(`[ViewManager] navigate: failed to load URL for view ${index}`, err)
+    }
+  }
+
+  reload(index: number): void {
+    const view = this.views.get(index)
+    if (!view) {
+      console.warn(`[ViewManager] reload: view ${index} not found`)
+      return
+    }
+    try {
+      view.webContents.reload()
+    } catch (err) {
+      console.warn(`[ViewManager] reload: failed to reload view ${index}`, err)
+    }
+  }
+
   setControlBarVisible(visible: boolean): void {
     this.controlBarVisible = visible
     this.updateBounds()
@@ -221,6 +251,17 @@ export class ViewManager {
 
   getViews(): Map<number, BrowserView> {
     return this.views
+  }
+
+  /**
+   * Find the logical BrowserView index for the given WebContents id.
+   * Returns null if not found.
+   */
+  getIndexByWebContentsId(id: number): number | null {
+    for (const [idx, view] of this.views.entries()) {
+      if (view.webContents.id === id) return idx
+    }
+    return null
   }
 
   async capturePage(index: number): Promise<{ bitmap: Buffer; imageSize: { width: number; height: number } } | null> {

@@ -28,6 +28,9 @@ export class IPCHandlers {
   }
 
   register(): void {
+    ipcMain.handle('get-performance-mode', () => {
+      return Boolean(this.config.performanceMode)
+    })
     ipcMain.handle('get-webview-urls', () => {
       return this.config.urls
     })
@@ -42,22 +45,38 @@ export class IPCHandlers {
     })
 
     ipcMain.handle('show-setup-view', (event, index: number) => {
-      this.viewManager.showView(index)
+      if (this.config.performanceMode) {
+        const urls = this.config.urls || []
+        const target = urls[index]
+        if (typeof target === 'string') {
+          // In performance mode, we only keep a single BrowserView at index 0.
+          // Navigate that view to the requested URL, and ensure it is visible.
+          this.viewManager.navigate(0, target)
+          this.viewManager.showView(0)
+        } else {
+          // If invalid index, keep current view visible.
+          this.viewManager.showView(0)
+        }
+      } else {
+        this.viewManager.showView(index)
+      }
     })
 
     ipcMain.handle('finish-setup', () => {
       // Hide control bar so browser views use full window height during slideshow
       this.viewManager.setControlBarVisible(false)
 
-      // Get actual window dimensions to ensure offscreen windows match BrowserView size
-      const bounds = this.windowManager.getContentBounds()
-      const width = bounds?.width ?? this.config.window.width
-      const height = bounds?.height ?? this.config.window.height
+      if (!this.config.performanceMode) {
+        // Get actual window dimensions to ensure offscreen windows match BrowserView size
+        const bounds = this.windowManager.getContentBounds()
+        const width = bounds?.width ?? this.config.window.width
+        const height = bounds?.height ?? this.config.window.height
 
-      this.offscreenRenderer.createOffscreenWindows(this.config.urls, width, height)
+        this.offscreenRenderer.createOffscreenWindows(this.config.urls, width, height)
 
-      // Set up window resize handler to keep offscreen windows in sync with BrowserView
-      this.setupOffscreenResizeHandler()
+        // Set up window resize handler to keep offscreen windows in sync with BrowserView
+        this.setupOffscreenResizeHandler()
+      }
 
       this.windowManager.sendToRenderer('setup-complete')
       this.onSetupComplete()
@@ -76,7 +95,21 @@ export class IPCHandlers {
     })
 
     ipcMain.handle('navigate-webview', (event, index: number, url: string) => {
-      this.offscreenRenderer.navigate(index, url)
+      if (this.config.performanceMode) {
+        // Lightweight path: just navigate the single BrowserView
+        this.viewManager.navigate(0, url)
+      } else {
+        this.offscreenRenderer.navigate(index, url)
+      }
+    })
+
+    // Performance mode helpers: direct BrowserView navigation/reload
+    ipcMain.handle('navigate-browser-view', (event, index: number, url: string) => {
+      this.viewManager.navigate(index, url)
+    })
+
+    ipcMain.handle('reload-browser-view', (event, index: number) => {
+      this.viewManager.reload(index)
     })
 
     // New handlers for controlling painting
@@ -99,6 +132,36 @@ export class IPCHandlers {
 
     ipcMain.handle('disable-painting', (event, index: number) => {
       this.offscreenRenderer.disablePainting(index)
+    })
+
+    // Mirror user input from the visible BrowserView into the corresponding
+    // offscreen window so state (scrolling, drag interactions, etc.) stays in sync.
+    ipcMain.on('mirror-input', (event, payload: any) => {
+      try {
+        const senderId = event.sender.id
+        const idx = this.viewManager.getIndexByWebContentsId(senderId)
+        if (idx == null) return
+
+        const type = String(payload?.type || '')
+        if (!type) return
+
+        // Map payload into Electron InputEvent shapes
+        const base: any = { type }
+        if ('x' in payload && 'y' in payload) {
+          base.x = Number(payload.x) || 0
+          base.y = Number(payload.y) || 0
+        }
+        if (payload.button) base.button = payload.button
+        if (payload.clickCount) base.clickCount = Number(payload.clickCount) || 1
+        if (payload.deltaX != null) base.deltaX = Number(payload.deltaX) || 0
+        if (payload.deltaY != null) base.deltaY = Number(payload.deltaY) || 0
+        if (Array.isArray(payload.modifiers)) base.modifiers = payload.modifiers
+        if (payload.keyCode) base.keyCode = String(payload.keyCode)
+
+        this.offscreenRenderer.forwardInputEvent(idx, base)
+      } catch (err) {
+        console.warn('[IPCHandlers] failed to mirror input', err)
+      }
     })
 
     // Capture page from BrowserView directly
@@ -279,15 +342,19 @@ export class IPCHandlers {
     }
 
     ipcMain.removeHandler('get-webview-urls')
+    ipcMain.removeHandler('get-performance-mode')
     ipcMain.removeHandler('get-transition-config')
     ipcMain.removeHandler('get-timing-config')
     ipcMain.removeHandler('show-setup-view')
     ipcMain.removeHandler('finish-setup')
     ipcMain.removeHandler('reload-webview')
     ipcMain.removeHandler('navigate-webview')
+    ipcMain.removeHandler('navigate-browser-view')
+    ipcMain.removeHandler('reload-browser-view')
     ipcMain.removeHandler('set-active-painting-windows')
     ipcMain.removeHandler('enable-painting')
     ipcMain.removeHandler('disable-painting')
+    ipcMain.removeAllListeners('mirror-input')
     ipcMain.removeHandler('capture-browser-view')
     ipcMain.removeHandler('show-browser-view')
     ipcMain.removeHandler('hide-browser-views')

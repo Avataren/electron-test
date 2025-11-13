@@ -66,7 +66,13 @@ function initialize() {
   const mainWindow = windowManager.createWindow(preloadPath)
 
   viewManager.setMainWindow(mainWindow)
-  viewManager.createViews(defaultConfig.urls)
+  if (defaultConfig.performanceMode) {
+    // Create only a single BrowserView and navigate it during rotation
+    const initialUrl: string = defaultConfig.urls?.[0] ?? 'about:blank'
+    viewManager.createViews([initialUrl])
+  } else {
+    viewManager.createViews(defaultConfig.urls)
+  }
 
   // Ensure clean shutdown when the main window is closed.
   // Hidden offscreen BrowserWindows can keep the process alive in release,

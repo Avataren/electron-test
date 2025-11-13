@@ -285,6 +285,13 @@ export function useWebviewFrames(
         const srcArr = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
         const byteLength = srcArr.length
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+        const reportedScale = (size as any)?.scaleFactor
+        if (
+          typeof reportedScale === 'number' && isFinite(reportedScale) &&
+          Math.abs(reportedScale - dpr) > 0.01
+        ) {
+          console.warn('[useWebviewFrames] ⚠️ DPR mismatch: offscreen scale', reportedScale, 'renderer DPR', dpr)
+        }
 
         logFrameStats(index, srcArr, reportedWidth, reportedHeight, format)
 

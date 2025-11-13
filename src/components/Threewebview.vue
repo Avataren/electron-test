@@ -18,6 +18,7 @@ const loadingProgress = ref(0)
 const textureUpdateTimestamps = ref<Map<number, number>>(new Map())
 const isInitialLoading = ref(true) // NEW: Track if we're in initial loading phase
 const showCanvas = ref(false)
+const performanceMode = ref(false)
 
 interface TransitionConfig {
   name: string
@@ -191,6 +192,16 @@ const pageAspect = ref<number | null>(null)
 
 const showSetupView = async (index: number) => {
   store.setSetupIndex(index)
+  if (performanceMode.value) {
+    // In performance mode we only have a single BrowserView.
+    // Navigate that view to the selected URL for login/setup.
+    const targetUrl = urls.value?.[index]
+    if (typeof targetUrl === 'string') {
+      await window.ipcRenderer.invoke('navigate-browser-view', 0, targetUrl)
+      await window.ipcRenderer.invoke('show-browser-view', 0)
+    }
+    return
+  }
   await window.ipcRenderer.invoke('show-setup-view', index)
 }
 
@@ -228,8 +239,14 @@ const finishSetup = async () => {
   loadingProgress.value = 0
   isInitialLoading.value = true // FIXED: Reset initial loading flag
   await window.ipcRenderer.invoke('finish-setup')
-  void showBrowserView(store.currentIndex)
-  scheduleRender()
+  if (performanceMode.value) {
+    // Nothing else to do; the main process will continue showing the single view
+    // and we'll just rotate by navigating it.
+    await showBrowserView(0)
+  } else {
+    void showBrowserView(store.currentIndex)
+    scheduleRender()
+  }
 }
 
 const createPlanes = () => {
@@ -485,7 +502,7 @@ const enablePaintingForIndices = async (indices: number[]) => {
 const waitForTextureUpdates = async (
   indices: number[],
   previousTimestamps: Map<number, number>,
-  timeoutMs = 1000,
+  timeoutMs = 3000,
   pollIntervalMs = 30,
 ) => {
   const start = Date.now()
@@ -520,6 +537,7 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
   // This avoids IPC calls that can hang and cause stuck transitions
   const expectedWidth = canvasRef.value?.clientWidth || window.innerWidth
   const expectedHeight = canvasRef.value?.clientHeight || window.innerHeight
+  const dpr = renderer.value?.getPixelRatio?.() || window.devicePixelRatio || 1
 
   for (const index of unique) {
     const texture = textures[index] as THREE.DataTexture | undefined
@@ -539,14 +557,41 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
       return false
     }
 
-    // Log texture dimensions for debugging
-    console.log(`[Threewebview] ✓ Texture ${index} ready for transition:`, {
-      textureWidth: image.width,
-      textureHeight: image.height,
-      expectedWidth,
-      expectedHeight,
-      hasData: !!image.data
-    })
+    // Ensure backing size matches current viewport * DPR to avoid scale pop
+    const expectedBackingW = Math.max(1, Math.round(expectedWidth * dpr))
+    const expectedBackingH = Math.max(1, Math.round(expectedHeight * dpr))
+
+    if (image.width !== expectedBackingW || image.height !== expectedBackingH) {
+      console.warn(`[Threewebview] Texture ${index} size mismatch before transition. Waiting for correct size...`, {
+        current: { w: image.width, h: image.height },
+        expected: { w: expectedBackingW, h: expectedBackingH },
+        dpr
+      })
+
+      const start = Date.now()
+      const timeoutMs = 1000
+      while (Date.now() - start < timeoutMs) {
+        await new Promise((r) => setTimeout(r, 32))
+        const img = texture.image as { width?: number; height?: number } | undefined
+        if (img?.width === expectedBackingW && img?.height === expectedBackingH) break
+      }
+    }
+
+    // Final check after wait
+    if (image.width !== expectedBackingW || image.height !== expectedBackingH) {
+      console.warn(`[Threewebview] Proceeding with suboptimal texture size for index ${index}`, {
+        current: { w: image.width, h: image.height },
+        expected: { w: expectedBackingW, h: expectedBackingH }
+      })
+    } else {
+      console.log(`[Threewebview] ✓ Texture ${index} ready for transition`, {
+        textureWidth: image.width,
+        textureHeight: image.height,
+        expectedBackingW,
+        expectedBackingH,
+        dpr
+      })
+    }
   }
 
   console.log(`[Threewebview] ✓ All textures ready for transition`)
@@ -621,11 +666,29 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     // CRITICAL: Enable painting at 10fps for both source and target pages before transition
     // This ensures we capture fresh, up-to-date textures for the transition
     console.log(`[Threewebview] Enabling painting for transition pages: ${fromIndex}, ${targetIndex}`)
+    const prevTimestamps = new Map<number, number>(textureUpdateTimestamps.value)
     await enablePaintingForIndices([fromIndex, targetIndex])
+    // Wait for both textures to receive a fresh frame to avoid stale data
+    const gotUpdates = await waitForTextureUpdates([fromIndex, targetIndex], prevTimestamps, 3000, 30)
 
-    // Wait for offscreen windows to paint fresh frames at 10fps
-    // This ensures the captured textures are current, not stale
-    await new Promise(resolve => setTimeout(resolve, 250))
+    // If no fresh offscreen frame arrived (common when pages are visually idle),
+    // fall back to a direct capture of the currently visible BrowserView for the
+    // source page to ensure the FROM texture is current.
+    if (!gotUpdates) {
+      console.warn('[Threewebview] No fresh offscreen frames detected; capturing visible BrowserView for source')
+      try {
+        const capture = await window.ipcRenderer.invoke('capture-browser-view', fromIndex)
+        if (capture && capture.buffer) {
+          applyFrameToTexture(capture)
+          textureUpdateTimestamps.value.set(fromIndex, Date.now())
+          console.log('[Threewebview] Applied BrowserView capture to source texture')
+        } else {
+          console.warn('[Threewebview] BrowserView capture returned no data; proceeding with existing texture')
+        }
+      } catch (err) {
+        console.warn('[Threewebview] Failed to capture BrowserView for source', err)
+      }
+    }
 
     // Validate SOURCE texture - using continuously updated offscreen window texture
     console.log(`[Threewebview] Validating source texture from offscreen window ${fromIndex}`)
@@ -721,6 +784,19 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       console.error('[Threewebview] Failed to capture target texture')
       store.setTransitioning(false)
       return
+    }
+
+    // Freeze painting for the two pages participating in this transition so
+    // their textures don't change mid-animation (e.g., due to live content or
+    // late DPR adjustments). We'll re-enable/leave disabled according to the
+    // normal post-transition flow below.
+    try {
+      await disablePaintingForIndices([fromIndex, targetIndex])
+      console.info(
+        `[Threewebview] Frozen offscreen painting for transition indices: ${fromIndex}, ${targetIndex}`,
+      )
+    } catch (err) {
+      console.warn('[Threewebview] Failed to freeze offscreen painting before transition', err)
     }
 
     // Update currentIndex after textures are captured
@@ -870,6 +946,10 @@ const rotateWebview = () => {
 }
 
 const refreshWebviews = async () => {
+  if (store.isTransitioning || isResizing.value || !allTexturesLoaded.value) {
+    console.log('Skipping refresh: busy or not ready')
+    return
+  }
   console.log('Refreshing all webviews')
   for (let i = 0; i < urls.value.length; i++) {
     await window.ipcRenderer.invoke('reload-webview', i)
@@ -935,6 +1015,29 @@ const handleWebviewLoaded = (_event: any, data: { index: number; url: string }) 
 
 const { startTimers, stopTimers } = useRotationTimer(rotateWebview, refreshWebviews)
 
+// Simple rotation for performance mode: just navigate the single BrowserView
+const rotatePerf = async () => {
+  if (!urls.value?.length) return
+  const nextIndex = (store.currentIndex + 1) % urls.value.length
+  const targetUrl = urls.value[nextIndex]
+  try {
+    await window.ipcRenderer.invoke('navigate-browser-view', 0, targetUrl)
+    store.setCurrentIndex(nextIndex)
+  } catch (err) {
+    console.warn('[Threewebview] Failed to navigate in performance mode', err)
+  }
+}
+
+const refreshPerf = async () => {
+  try {
+    await window.ipcRenderer.invoke('reload-browser-view', 0)
+  } catch (err) {
+    console.warn('[Threewebview] Failed to reload in performance mode', err)
+  }
+}
+
+const { startTimers: startPerfTimers, stopTimers: stopPerfTimers } = useRotationTimer(rotatePerf, refreshPerf, { enableRefresh: false })
+
 const handleDotClick = (index: number) => {
   if (!allTexturesLoaded.value) return
 
@@ -951,8 +1054,39 @@ const handleDotClick = (index: number) => {
 }
 
 onMounted(async () => {
+  // Detect performance mode first
+  try {
+    const perf = await window.ipcRenderer.invoke('get-performance-mode')
+    performanceMode.value = !!perf
+  } catch {
+    performanceMode.value = false
+  }
+
   await loadUrls()
 
+  if (performanceMode.value) {
+    // Minimal path: show a single BrowserView and rotate by navigation
+    try {
+      await window.ipcRenderer.invoke('show-browser-view', 0)
+    } catch (err) {
+      console.warn('[Threewebview] Failed to show initial BrowserView in performance mode', err)
+    }
+
+    // Start timers after setup is finished
+    const handleSetupCompletePerf = async () => {
+      startPerfTimers()
+    }
+    ;(window as any).__handleSetupCompletePerf = handleSetupCompletePerf
+    window.ipcRenderer.on('setup-complete', handleSetupCompletePerf)
+
+    // Also respond to direct page loaded logs
+    window.ipcRenderer.on('webview-loaded', handleWebviewLoaded)
+
+    // Do not init Three/Offscreen listeners in performance mode
+    return
+  }
+
+  // Normal (non-performance) path
   // Load transition configuration
   try {
     const config = await window.ipcRenderer.invoke('get-transition-config')
@@ -1027,32 +1161,43 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  stopTimers()
-  // webview-frame is cleaned up by removeListeners()
+  // Stop whichever timers are active
+  try { stopPerfTimers() } catch {}
+  try { stopTimers() } catch {}
+
+  // Cleanup listeners based on mode
   window.ipcRenderer.off('webview-loaded', handleWebviewLoaded)
-  removeListeners()
-  window.removeEventListener('resize', handleResize)
-  window.ipcRenderer.off('main-window-resized', handleResize)
+  // Remove whichever setup-complete listener we attached
+  try {
+    const perfHandler = (window as any).__handleSetupCompletePerf
+    if (perfHandler) window.ipcRenderer.off('setup-complete', perfHandler)
+  } catch {}
   window.ipcRenderer.off('setup-complete', handleSetupComplete)
+  if (!performanceMode.value) {
+    // webview-frame is cleaned up by removeListeners()
+    try { removeListeners() } catch {}
+    window.removeEventListener('resize', handleResize)
+    window.ipcRenderer.off('main-window-resized', handleResize)
 
-  if (animationFrameId !== null) {
-    cancelAnimationFrame(animationFrameId)
-    animationFrameId = null
-  }
-  needsRender = false
-
-  if (transitionManager) {
-    transitionManager.cleanup()
-  }
-
-  dispose()
-  textures.forEach((texture) => texture.dispose())
-  planes.forEach((plane) => {
-    plane.geometry.dispose()
-    if (plane.material instanceof THREE.Material) {
-      plane.material.dispose()
+    if (animationFrameId !== null) {
+      cancelAnimationFrame(animationFrameId)
+      animationFrameId = null
     }
-  })
+    needsRender = false
+
+    if (transitionManager) {
+      transitionManager.cleanup()
+    }
+
+    dispose()
+    textures.forEach((texture) => texture.dispose())
+    planes.forEach((plane) => {
+      plane.geometry.dispose()
+      if (plane.material instanceof THREE.Material) {
+        plane.material.dispose()
+      }
+    })
+  }
 })
 </script>
 
@@ -1088,7 +1233,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Loading overlay -->
-    <div v-if="!store.setupMode && !allTexturesLoaded" class="loading-overlay">
+    <div v-if="!performanceMode && !store.setupMode && !allTexturesLoaded" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-spinner"></div>
         <div class="loading-text">Loading pages...</div>
