@@ -48,7 +48,7 @@ const { scene, camera, renderer, initScene, onResize, dispose, FRUSTUM_HEIGHT, D
 
 const pageAspect = ref<number | null>(null)
 
-  const { urls, loadUrls, setupListeners, removeListeners, applyFrameToTexture } = useWebviewFrames(
+  const { urls, loadUrls, setupListeners, removeListeners, applyFrameToTexture, getFrameFingerprint } = useWebviewFrames(
   textures,
   async (index: number, size?: { width: number; height: number; backingWidth?: number; backingHeight?: number }) => {
     // Update timestamp when texture receives new frame
@@ -524,6 +524,56 @@ const waitForTextureUpdates = async (
   return false
 }
 
+// Wait until pages produce a couple of similar consecutive frames after being enabled,
+// indicating the UI has largely settled (fonts loaded, widgets sized, etc.).
+const waitForStableFrames = async (
+  indices: number[],
+  {
+    timeoutMs = 1500,
+    pollIntervalMs = 50,
+    minStableFrames = 2,
+    checksumEpsilon = 2000, // small tolerance for minor noise
+  }: { timeoutMs?: number; pollIntervalMs?: number; minStableFrames?: number; checksumEpsilon?: number } = {}
+) => {
+  const start = Date.now()
+  const stableCounts = new Map<number, number>()
+  const lastFp = new Map<number, { w: number; h: number; sum: number }>()
+
+  while (Date.now() - start < timeoutMs) {
+    let allStable = true
+    for (const idx of indices) {
+      const fp = getFrameFingerprint(idx)
+      if (!fp) {
+        allStable = false
+        continue
+      }
+      const prev = lastFp.get(idx)
+      if (!prev) {
+        lastFp.set(idx, { w: fp.width, h: fp.height, sum: fp.checksum })
+        stableCounts.set(idx, 0)
+        allStable = false
+      } else {
+        const sameDims = prev.w === fp.width && prev.h === fp.height
+        const closeSum = Math.abs((fp.checksum >>> 0) - (prev.sum >>> 0)) <= checksumEpsilon
+        if (sameDims && closeSum) {
+          const c = (stableCounts.get(idx) || 0) + 1
+          stableCounts.set(idx, c)
+        } else {
+          lastFp.set(idx, { w: fp.width, h: fp.height, sum: fp.checksum })
+          stableCounts.set(idx, 0)
+          allStable = false
+        }
+      }
+    }
+
+    if (allStable && indices.every((i) => (stableCounts.get(i) || 0) >= minStableFrames)) {
+      return true
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs))
+  }
+  return false
+}
+
 const captureTexturesForTransition = async (indices: number[]): Promise<boolean> => {
   if (!indices.length || store.setupMode) {
     return true
@@ -671,6 +721,16 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     // Wait for both textures to receive a fresh frame to avoid stale data
     const gotUpdates = await waitForTextureUpdates([fromIndex, targetIndex], prevTimestamps, 3000, 30)
 
+    // Additionally, wait briefly for page content to settle (consecutive similar frames)
+    if (gotUpdates) {
+      const settled = await waitForStableFrames([fromIndex, targetIndex], { timeoutMs: 1200, pollIntervalMs: 60, minStableFrames: 2 })
+      if (!settled) {
+        console.warn('[Threewebview] Proceeding without stability consensus (timeout)')
+      } else {
+        console.log('[Threewebview] ✓ Source and target pages appear visually stable')
+      }
+    }
+
     // If no fresh offscreen frame arrived (common when pages are visually idle),
     // fall back to a direct capture of the currently visible BrowserView for the
     // source page to ensure the FROM texture is current.
@@ -799,9 +859,6 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       console.warn('[Threewebview] Failed to freeze offscreen painting before transition', err)
     }
 
-    // Update currentIndex after textures are captured
-    store.setCurrentIndex(targetIndex)
-
     if (shouldRunVisualTransition) {
       // Canvas is already visible from earlier, now setup the transition scene
     }
@@ -816,9 +873,10 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       }
       needsRender = false
 
-      // Create transition overlay FIRST (shows FROM texture at renderOrder 1000)
+      // Update currentIndex before overlay creation to restore previous working flow
+      store.setCurrentIndex(targetIndex)
+      // Create transition overlay (shows FROM texture at renderOrder 1000)
       transitionManager.startTransition(type, fromIndex, fromPlane.position)
-
       // NOW make target visible (it will be underneath the overlay)
       targetPlane.visible = true
 
@@ -830,6 +888,9 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       if (renderer.value && scene.value && camera.value) {
         renderer.value.render(scene.value, camera.value)
       }
+
+      // Keep BrowserViews hidden during the overlay animation as before; they
+      // are reattached in the finally block after transition completes.
 
       // CRITICAL: NOW schedule renders to animate the transition
       // The render loop will call transitionManager.update() on each frame
@@ -852,7 +913,7 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     // timings) and leave residues on the destination image. Instead poll
     // the TransitionManager for completion with a sensible fallback timeout.
     await new Promise<void>((resolve) => {
-      const maxWait = 10000 // 10s fallback to avoid hanging forever
+      const maxWait = 10000 // restore prior 10s fallback
       const interval = 100
       let waited = 0
 

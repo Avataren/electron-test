@@ -35,6 +35,12 @@ export function useWebviewFrames(
   const pendingFrameRafs = new Map<number, number>()
   const frameStatsLogged = new Set<number>()
 
+  // Lightweight per-index fingerprint of the last applied frame. This lets
+  // callers wait for a short period of visual stability before using the
+  // texture in a transition.
+  type FrameFingerprint = { width: number; height: number; checksum: number; updatedAt: number }
+  const frameFingerprints = new Map<number, FrameFingerprint>()
+
   // Historically we cloned incoming buffers to decouple lifetimes.
   // With SAB/transfer support and one-RAF queuing, we can safely
   // reuse the provided ArrayBuffer/Uint8Array without copying.
@@ -185,6 +191,7 @@ export function useWebviewFrames(
     texture: THREE.DataTexture,
     src: Uint8Array,
     forceOpaque = true,
+    sampler?: { stride: number; sum: number; count: number }
   ): void => {
     const image = texture.image as { data: Uint8Array; width: number; height: number }
     const dest = image.data
@@ -196,6 +203,17 @@ export function useWebviewFrames(
       dest[j + 1] = src[bi + 1] ?? 0
       dest[j + 2] = src[bi + 0] ?? 0
       dest[j + 3] = forceOpaque ? 255 : src[bi + 3] ?? 255
+
+      if (sampler && sampler.stride > 0 && (i % sampler.stride) === 0) {
+        // Use pre-conversion BGRA for checksum to avoid extra math; include alpha
+        const b = src[bi + 0] ?? 0
+        const g = src[bi + 1] ?? 0
+        const r = src[bi + 2] ?? 0
+        const a = forceOpaque ? 255 : (src[bi + 3] ?? 255)
+        // Simple rolling sum; callers only use relative stability, not cryptographic integrity
+        sampler.sum = (sampler.sum + r + g + b + a) >>> 0
+        sampler.count++
+      }
     }
   }
 
@@ -356,7 +374,9 @@ export function useWebviewFrames(
         )
 
         const dataTexture = ensureDataTexture(index, pageWidth, pageHeight)
-        writeBGRAIntoTexture(dataTexture, srcArr, true)
+        // Subsample roughly ~2k pixels for a quick checksum
+        const sample = { stride: Math.max(1, Math.floor((pageWidth * pageHeight) / 2048)), sum: 0, count: 0 }
+        writeBGRAIntoTexture(dataTexture, srcArr, true, sample)
         dataTexture.needsUpdate = true
 
         // Use reported CSS dimensions when backing dimensions are provided
@@ -407,6 +427,17 @@ export function useWebviewFrames(
         } catch (err) {
           console.debug('[useWebviewFrames] failed to send initial-frame-ack', err)
         }
+
+        // Update per-index fingerprint for stability checks
+        try {
+          const checksum = (sample.sum ^ (pageWidth << 12) ^ pageHeight) >>> 0
+          frameFingerprints.set(index, {
+            width: pageWidth,
+            height: pageHeight,
+            checksum,
+            updatedAt: Date.now(),
+          })
+        } catch {}
 
         const image = dataTexture.image as { data: Uint8Array }
         updateDebugPreview(index, pageWidth, pageHeight, image.data)
@@ -490,6 +521,26 @@ export function useWebviewFrames(
           console.debug('[useWebviewFrames] failed to send texture-applied event (encoded path)', err)
         }
 
+        // Update fingerprint for encoded path too (subsample RGBA data)
+        try {
+          const pxCount = targetWidth * targetHeight
+          const stride = Math.max(1, Math.floor(pxCount / 2048))
+          let sum = 0
+          let cnt = 0
+          for (let i = 0; i < pxCount; i += stride) {
+            const j = i * 4
+            sum = (sum + image.data[j] + image.data[j + 1] + image.data[j + 2] + image.data[j + 3]) >>> 0
+            cnt++
+          }
+          const checksum = (sum ^ (targetWidth << 12) ^ targetHeight) >>> 0
+          frameFingerprints.set(index, {
+            width: targetWidth,
+            height: targetHeight,
+            checksum,
+            updatedAt: Date.now(),
+          })
+        } catch {}
+
         updateDebugPreview(index, targetWidth, targetHeight, image.data)
       } catch (err) {
         console.error('Error updating texture from webview frame', err)
@@ -550,5 +601,6 @@ export function useWebviewFrames(
     setupListeners,
     removeListeners,
     applyFrameToTexture,
+    getFrameFingerprint: (index: number) => frameFingerprints.get(index),
   }
 }
