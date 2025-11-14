@@ -71,6 +71,11 @@ export class RippleTransition extends BaseTransition {
           // Fade out as ripples expand
           float alpha = 1.0 - progress;
 
+          // Make any UVs outside the texture fully transparent
+          vec2 inBounds = step(vec2(0.0), distortedUV) * step(distortedUV, vec2(1.0));
+          float mask = inBounds.x * inBounds.y;
+          alpha *= mask;
+
           gl_FragColor = vec4(color.rgb, alpha);
         }
       `,

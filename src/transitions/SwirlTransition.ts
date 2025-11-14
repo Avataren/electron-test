@@ -70,7 +70,11 @@ export class SwirlTransition extends BaseTransition {
           float darkness = 1.0 - (progress * dist * 0.5);
           color.rgb *= darkness;
 
-          gl_FragColor = vec4(color.rgb, fadeOut * scale);
+          // Make any UVs outside the texture fully transparent
+          vec2 inBounds = step(vec2(0.0), swirlUV) * step(swirlUV, vec2(1.0));
+          float mask = inBounds.x * inBounds.y;
+
+          gl_FragColor = vec4(color.rgb, (fadeOut * scale) * mask);
         }
       `,
       transparent: true,
