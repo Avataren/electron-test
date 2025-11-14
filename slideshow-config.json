@@ -41,9 +41,9 @@
     }
   ],
   "transition-webpage-fps": 10,
-  "slideshow-page-duration": "2m",
+  "slideshow-page-duration": "5s",
   "auto-open-devtools": true,
   "transition-duration": "3s"
   ,
-  "performance-mode": true
+  "performance-mode": false
 }

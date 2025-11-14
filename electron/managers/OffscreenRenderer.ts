@@ -133,8 +133,9 @@ export class OffscreenRenderer {
         // respects the configured frameRate. This prevents flooding the
         // renderer/IPC with every paint event which can starve texture
         // application.
+        // Avoid an extra copy: keep the Buffer returned by toBitmap()
         this.pendingFrames.set(index, {
-          buffer: Buffer.from(bitmap),
+          buffer: bitmap,
           size: {
             width: size.width,
             height: size.height,

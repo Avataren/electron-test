@@ -35,11 +35,11 @@ export function useWebviewFrames(
   const pendingFrameRafs = new Map<number, number>()
   const frameStatsLogged = new Set<number>()
 
+  // Historically we cloned incoming buffers to decouple lifetimes.
+  // With SAB/transfer support and one-RAF queuing, we can safely
+  // reuse the provided ArrayBuffer/Uint8Array without copying.
   const cloneToUint8Array = (buffer: ArrayBuffer | Uint8Array) => {
-    if (buffer instanceof Uint8Array) {
-      return buffer.slice()
-    }
-    return new Uint8Array(buffer.slice(0))
+    return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
   }
 
   const logFrameStats = (
@@ -512,12 +512,14 @@ export function useWebviewFrames(
 
     try {
       const clonedSize = data.size ? { ...data.size } : undefined
-      const clonedFrame: IncomingFrame = {
-        ...data,
+      // Avoid copying the large pixel buffer; retain the provided view.
+      const queued: IncomingFrame = {
+        index: data.index,
+        buffer: data.buffer,
         size: clonedSize,
-        buffer: cloneToUint8Array(data.buffer),
+        format: (data as any).format,
       }
-      pendingFrames.set(data.index, clonedFrame)
+      pendingFrames.set(data.index, queued)
       schedulePendingFrame(data.index)
     } catch (err) {
       console.error('[useWebviewFrames] Failed to queue pending frame', err)
