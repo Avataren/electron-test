@@ -7,7 +7,8 @@ export class SwirlTransition extends BaseTransition {
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig
-    const geometry = new THREE.PlaneGeometry(width, height, 100, 100)
+    // Geometry segmentation is not needed; effect is purely in fragment shader
+    const geometry = new THREE.PlaneGeometry(width, height, 1, 1)
 
   const texture = this.textures[fromIndex]
   if (!texture) return
@@ -24,6 +25,8 @@ export class SwirlTransition extends BaseTransition {
         strength: { value: 3.0 },
       },
       vertexShader: `
+        precision mediump float;
+        precision mediump int;
         varying vec2 vUv;
         void main() {
           vUv = uv;
@@ -31,6 +34,8 @@ export class SwirlTransition extends BaseTransition {
         }
       `,
       fragmentShader: `
+        precision mediump float;
+        precision mediump int;
         uniform sampler2D tDiffuse;
         uniform float progress;
         uniform vec2 center;
@@ -69,7 +74,8 @@ export class SwirlTransition extends BaseTransition {
         }
       `,
       transparent: true,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
+      toneMapped: false,
     })
 
     material.depthTest = false

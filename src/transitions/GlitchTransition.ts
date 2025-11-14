@@ -24,6 +24,8 @@ export class GlitchTransition extends BaseTransition {
         glitchStrength: { value: 0.3 },
       },
       vertexShader: `
+        precision mediump float;
+        precision mediump int;
         varying vec2 vUv;
         void main() {
           vUv = uv;
@@ -31,6 +33,8 @@ export class GlitchTransition extends BaseTransition {
         }
       `,
       fragmentShader: `
+        precision mediump float;
+        precision mediump int;
         uniform sampler2D tDiffuse;
         uniform float progress;
         uniform float time;
@@ -96,7 +100,8 @@ export class GlitchTransition extends BaseTransition {
         }
       `,
       transparent: true,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
+      toneMapped: false,
     })
 
     material.depthTest = false

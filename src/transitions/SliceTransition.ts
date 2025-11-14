@@ -14,6 +14,7 @@ export class SliceTransition extends BaseTransition {
   private slices: Slice[] = []
   private readonly numSlices = 8
   private sharedTexture: THREE.Texture | null = null
+  private sharedMaterial: THREE.MeshBasicMaterial | null = null
   private elapsedSeconds = 0
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
@@ -25,6 +26,16 @@ export class SliceTransition extends BaseTransition {
     if (this.sharedTexture) {
       this.sharedTexture.colorSpace = THREE.SRGBColorSpace
       this.sharedTexture.needsUpdate = true
+      // Use a single shared material across all slices
+      this.sharedMaterial = new THREE.MeshBasicMaterial({
+        map: this.sharedTexture,
+        side: THREE.FrontSide,
+        transparent: true,
+        opacity: 1,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      })
     }
 
     for (let i = 0; i < this.numSlices; i++) {
@@ -39,15 +50,8 @@ export class SliceTransition extends BaseTransition {
       uvAttribute?.setXY(2, 0, vStart)
       uvAttribute?.setXY(3, 1, vStart)
 
-      // Share the same texture across all slices
-      const material = new THREE.MeshBasicMaterial({
-        map: this.sharedTexture,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 1,
-        depthTest: false,
-        depthWrite: false,
-      })
+      // Share a single material across all slices for fewer draw state changes
+      const material = this.sharedMaterial as THREE.MeshBasicMaterial
 
       const slice = new THREE.Mesh(geometry, material)
 
@@ -80,10 +84,9 @@ export class SliceTransition extends BaseTransition {
       const startX = slice.startX ?? 0
       const targetX = slice.targetX ?? slice.direction * 16
       slice.mesh.position.x = startX + (targetX - startX) * p
-
-      // Fade out uniformly over time
-      ;(slice.mesh.material as THREE.MeshBasicMaterial).opacity = 1.0 - t
     })
+    // Fade out uniformly over time (shared material)
+    if (this.sharedMaterial) this.sharedMaterial.opacity = 1.0 - t
 
     return t >= 1
   }
@@ -92,15 +95,14 @@ export class SliceTransition extends BaseTransition {
     this.slices.forEach((slice) => {
       this.scene.remove(slice.mesh)
       slice.mesh.geometry.dispose()
-      if (slice.mesh.material instanceof THREE.Material) {
-        // Dispose only the material/geometry. Do NOT dispose the shared
-        // texture because it's owned by the main textures array.
-        slice.mesh.material.dispose()
-      }
     })
     this.slices.length = 0
 
     // Do not dispose sharedTexture; it's managed by the main application.
     this.sharedTexture = null
+    if (this.sharedMaterial) {
+      this.sharedMaterial.dispose()
+      this.sharedMaterial = null
+    }
   }
 }

@@ -6,23 +6,29 @@ export class PixelateTransition extends BaseTransition {
   private progress = 0
   private lastTextureWidth = 0
   private lastTextureHeight = 0
+  private textureRef: THREE.Texture | null = null
+  private prevMagFilter: number | null = null
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig
     const geometry = new THREE.PlaneGeometry(width, height)
 
-  console.log(`[PixelateTransition] Creating transition overlay for fromIndex=${fromIndex}`)
-  console.log(`[PixelateTransition] Total textures available: ${this.textures.length}`)
-
   const texture = this.textures[fromIndex]
   if (!texture) {
-    console.error(`[PixelateTransition] ❌ No texture found at fromIndex=${fromIndex}`)
+    // Texture not available; nothing to render
     return
   }
 
   // Use the shared texture reference from the main textures array so it
   // stays up-to-date with resizes and new frames.
   texture.colorSpace = THREE.SRGBColorSpace
+  texture.needsUpdate = true
+
+  // For the pixelate look, nearest filtering on magnification is cheaper and matches style.
+  // Remember previous filter to restore on cleanup to avoid side effects.
+  this.textureRef = texture
+  this.prevMagFilter = texture.magFilter
+  texture.magFilter = THREE.NearestFilter
   texture.needsUpdate = true
 
   // DEBUG: Log texture info to verify we're using the correct one
@@ -32,23 +38,8 @@ export class PixelateTransition extends BaseTransition {
   const texWidth = textureImage?.width || width * 100
   const texHeight = textureImage?.height || height * 100
 
-  console.log(`[PixelateTransition] Using texture at index ${fromIndex}:`, {
-    width: texWidth,
-    height: texHeight,
-    hasData: Boolean(textureImage?.data)
-  })
     this.lastTextureWidth = texWidth
     this.lastTextureHeight = texHeight
-
-    // Log detailed information about dimensions for debugging
-    console.log(`[PixelateTransition] Creating transition:`)
-    console.log(`  - Texture resolution: ${texWidth}x${texHeight}px (from texture.image)`)
-    console.log(`  - Plane size: ${width.toFixed(2)}x${height.toFixed(2)} (world units)`)
-    console.log(`  - Texture has valid dimensions: ${!!(textureImage?.width && textureImage?.height)}`)
-
-    if (!textureImage?.width || !textureImage?.height) {
-      console.warn(`[PixelateTransition] ⚠️  Texture missing dimensions, using fallback calculation (plane * 100)`)
-    }
 
     // Custom shader for pixelate and dissolve effect
     const material = new THREE.ShaderMaterial({
@@ -59,6 +50,8 @@ export class PixelateTransition extends BaseTransition {
         resolution: { value: new THREE.Vector2(texWidth, texHeight) },
       },
       vertexShader: `
+        precision mediump float;
+        precision mediump int;
         varying vec2 vUv;
         void main() {
           vUv = uv;
@@ -66,6 +59,8 @@ export class PixelateTransition extends BaseTransition {
         }
       `,
       fragmentShader: `
+        precision mediump float;
+        precision mediump int;
         uniform sampler2D tDiffuse;
         uniform float progress;
         uniform float pixelSize;
@@ -97,7 +92,8 @@ export class PixelateTransition extends BaseTransition {
         }
       `,
       transparent: true,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
+      toneMapped: false,
     })
 
     material.depthTest = false
@@ -124,7 +120,6 @@ export class PixelateTransition extends BaseTransition {
 
         if (currentWidth > 0 && currentHeight > 0 &&
             (currentWidth !== this.lastTextureWidth || currentHeight !== this.lastTextureHeight)) {
-          console.log(`[PixelateTransition] Texture dimensions changed: ${this.lastTextureWidth}x${this.lastTextureHeight} -> ${currentWidth}x${currentHeight}`)
           this.lastTextureWidth = currentWidth
           this.lastTextureHeight = currentHeight
           if (material.uniforms.resolution) {
@@ -154,8 +149,6 @@ export class PixelateTransition extends BaseTransition {
   updateResolution(width: number, height: number): void {
     if (!this.planeMesh) return
 
-    console.log(`[PixelateTransition] Updating resolution to ${width}x${height}`)
-
     const material = this.planeMesh.material as THREE.ShaderMaterial
     if (material.uniforms?.resolution) {
       material.uniforms.resolution.value.set(width, height)
@@ -176,6 +169,15 @@ export class PixelateTransition extends BaseTransition {
 
       this.planeMesh = null
     }
+    // Restore texture filtering if we changed it
+    if (this.textureRef) {
+      if (this.prevMagFilter !== null) {
+        this.textureRef.magFilter = this.prevMagFilter
+        this.textureRef.needsUpdate = true
+      }
+    }
+    this.textureRef = null
+    this.prevMagFilter = null
     this.progress = 0
     this.lastTextureWidth = 0
     this.lastTextureHeight = 0

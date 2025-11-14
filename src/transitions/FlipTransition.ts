@@ -23,6 +23,7 @@ export class FlipTransition extends BaseTransition {
       transparent: true,
       depthTest: false,
       depthWrite: false,
+      toneMapped: false,
     })
 
     // Create a pivot at the LEFT edge of the page to mimic a page turn.

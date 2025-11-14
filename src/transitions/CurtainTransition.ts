@@ -14,8 +14,8 @@ export class CurtainTransition extends BaseTransition {
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig
 
-    // Dense segments along X so the fold looks smooth
-    const geometry = new THREE.PlaneGeometry(width, height, 200, 2)
+    // Reduce segments along X to ease load on low-power GPUs while keeping curl fidelity
+    const geometry = new THREE.PlaneGeometry(width, height, 96, 2)
 
     const texture = this.textures[fromIndex]
     if (!texture) return
@@ -31,6 +31,8 @@ export class CurtainTransition extends BaseTransition {
         uHeight: { value: height },
       },
       vertexShader: `
+        precision mediump float;
+        precision mediump int;
         uniform float progress;
         uniform float uWidth;
         uniform float uHeight;
@@ -90,6 +92,8 @@ export class CurtainTransition extends BaseTransition {
         }
       `,
       fragmentShader: `
+        precision mediump float;
+        precision mediump int;
         uniform sampler2D tDiffuse;
         uniform float progress;
         varying vec2 vUv;
@@ -107,6 +111,7 @@ export class CurtainTransition extends BaseTransition {
       `,
       transparent: true,
       side: THREE.DoubleSide,
+      toneMapped: false,
     })
 
     material.depthTest = false
@@ -116,15 +121,6 @@ export class CurtainTransition extends BaseTransition {
     this.planeMesh.position.set(planePosition.x, planePosition.y, planePosition.z + 0.001)
     this.planeMesh.renderOrder = 2000
     this.scene.add(this.planeMesh)
-    try {
-      // Light debug to verify creation and duration
-      // eslint-disable-next-line no-console
-      console.log('[CurtainTransition] create', {
-        durationSeconds: this.durationSeconds,
-        width,
-        height,
-      })
-    } catch {}
     this.progress = 0
   }
 
@@ -141,16 +137,7 @@ export class CurtainTransition extends BaseTransition {
 
     // Advance after uniforms set
     this.progress += 1 / 60 / this.durationSeconds
-    if (this.progress < 1.0) {
-      try {
-        if ((this as any).__dbgFrames === undefined) (this as any).__dbgFrames = 0
-        if ((this as any).__dbgFrames < 3) {
-          // eslint-disable-next-line no-console
-          console.log('[CurtainTransition] progress', this.progress.toFixed(3))
-          ;(this as any).__dbgFrames++
-        }
-      } catch {}
-    }
+    
     return this.progress >= 1.0
   }
 

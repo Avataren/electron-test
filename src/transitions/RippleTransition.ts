@@ -7,7 +7,8 @@ export class RippleTransition extends BaseTransition {
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig
-    const geometry = new THREE.PlaneGeometry(width, height, 100, 100)
+    // Fewer segments reduce vertex load on low-power GPUs while keeping the look
+    const geometry = new THREE.PlaneGeometry(width, height, 48, 48)
 
   const texture = this.textures[fromIndex]
   if (!texture) return
@@ -25,6 +26,8 @@ export class RippleTransition extends BaseTransition {
         frequency: { value: 20.0 },
       },
       vertexShader: `
+        precision mediump float;
+        precision mediump int;
         uniform float progress;
         uniform vec2 center;
         uniform float waveStrength;
@@ -53,6 +56,8 @@ export class RippleTransition extends BaseTransition {
         }
       `,
       fragmentShader: `
+        precision mediump float;
+        precision mediump int;
         uniform sampler2D tDiffuse;
         uniform float progress;
         varying vec2 vUv;
@@ -70,7 +75,8 @@ export class RippleTransition extends BaseTransition {
         }
       `,
       transparent: true,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
+      toneMapped: false,
     })
 
     material.depthTest = false
