@@ -38,8 +38,85 @@ export function useWebviewFrames(
   // Lightweight per-index fingerprint of the last applied frame. This lets
   // callers wait for a short period of visual stability before using the
   // texture in a transition.
-  type FrameFingerprint = { width: number; height: number; checksum: number; updatedAt: number }
+  type FrameFingerprint = {
+    width: number
+    height: number
+    checksum: number
+    updatedAt: number
+    hashHi: number
+    hashLo: number
+  }
   const frameFingerprints = new Map<number, FrameFingerprint>()
+
+  // Compute a simple 64-bit average hash (aHash) over an 8x8 grid by sampling
+  // one pixel per cell. Returns two 32-bit parts {hi, lo}.
+  const computeAhash64BGRA = (src: Uint8Array, width: number, height: number) => {
+    const cols = 8, rows = 8
+    const stepX = Math.max(1, Math.floor(width / cols))
+    const stepY = Math.max(1, Math.floor(height / rows))
+    const samples: number[] = new Array(cols * rows)
+    let k = 0
+    for (let ry = 0; ry < rows; ry++) {
+      const y = Math.min(height - 1, Math.floor(ry * stepY + stepY / 2))
+      for (let cx = 0; cx < cols; cx++) {
+        const x = Math.min(width - 1, Math.floor(cx * stepX + stepX / 2))
+        const idx = (y * width + x) * 4
+        const b = src[idx + 0] || 0
+        const g = src[idx + 1] || 0
+        const r = src[idx + 2] || 0
+        const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) | 0
+        samples[k++] = lum
+      }
+    }
+    let avg = 0
+    for (let i = 0; i < samples.length; i++) avg += samples[i]
+    avg = Math.max(1, Math.floor(avg / samples.length))
+    let hi = 0 >>> 0
+    let lo = 0 >>> 0
+    for (let i = 0; i < samples.length; i++) {
+      const bit = samples[i] > avg ? 1 : 0
+      if (i < 32) {
+        hi = ((hi << 1) | bit) >>> 0
+      } else {
+        lo = ((lo << 1) | bit) >>> 0
+      }
+    }
+    return { hi, lo }
+  }
+
+  const computeAhash64RGBA = (src: Uint8Array, width: number, height: number) => {
+    const cols = 8, rows = 8
+    const stepX = Math.max(1, Math.floor(width / cols))
+    const stepY = Math.max(1, Math.floor(height / rows))
+    const samples: number[] = new Array(cols * rows)
+    let k = 0
+    for (let ry = 0; ry < rows; ry++) {
+      const y = Math.min(height - 1, Math.floor(ry * stepY + stepY / 2))
+      for (let cx = 0; cx < cols; cx++) {
+        const x = Math.min(width - 1, Math.floor(cx * stepX + stepX / 2))
+        const idx = (y * width + x) * 4
+        const r = src[idx + 0] || 0
+        const g = src[idx + 1] || 0
+        const b = src[idx + 2] || 0
+        const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) | 0
+        samples[k++] = lum
+      }
+    }
+    let avg = 0
+    for (let i = 0; i < samples.length; i++) avg += samples[i]
+    avg = Math.max(1, Math.floor(avg / samples.length))
+    let hi = 0 >>> 0
+    let lo = 0 >>> 0
+    for (let i = 0; i < samples.length; i++) {
+      const bit = samples[i] > avg ? 1 : 0
+      if (i < 32) {
+        hi = ((hi << 1) | bit) >>> 0
+      } else {
+        lo = ((lo << 1) | bit) >>> 0
+      }
+    }
+    return { hi, lo }
+  }
 
   // Historically we cloned incoming buffers to decouple lifetimes.
   // With SAB/transfer support and one-RAF queuing, we can safely
@@ -428,14 +505,17 @@ export function useWebviewFrames(
           console.debug('[useWebviewFrames] failed to send initial-frame-ack', err)
         }
 
-        // Update per-index fingerprint for stability checks
+        // Update per-index fingerprint for stability checks (checksum + aHash64)
         try {
           const checksum = (sample.sum ^ (pageWidth << 12) ^ pageHeight) >>> 0
+          const { hi, lo } = computeAhash64BGRA(srcArr, pageWidth, pageHeight)
           frameFingerprints.set(index, {
             width: pageWidth,
             height: pageHeight,
             checksum,
             updatedAt: Date.now(),
+            hashHi: hi >>> 0,
+            hashLo: lo >>> 0,
           })
         } catch {}
 
@@ -533,11 +613,14 @@ export function useWebviewFrames(
             cnt++
           }
           const checksum = (sum ^ (targetWidth << 12) ^ targetHeight) >>> 0
+          const { hi, lo } = computeAhash64RGBA(image.data, targetWidth, targetHeight)
           frameFingerprints.set(index, {
             width: targetWidth,
             height: targetHeight,
             checksum,
             updatedAt: Date.now(),
+            hashHi: hi >>> 0,
+            hashLo: lo >>> 0,
           })
         } catch {}
 

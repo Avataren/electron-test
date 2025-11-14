@@ -528,16 +528,34 @@ const waitForTextureUpdates = async (
 // indicating the UI has largely settled (fonts loaded, widgets sized, etc.).
 const waitForStableFrames = async (
   indices: number[],
+  baselineTimestamps?: Map<number, number>,
   {
-    timeoutMs = 1500,
-    pollIntervalMs = 50,
-    minStableFrames = 2,
-    checksumEpsilon = 2000, // small tolerance for minor noise
-  }: { timeoutMs?: number; pollIntervalMs?: number; minStableFrames?: number; checksumEpsilon?: number } = {}
+    timeoutMs = 2000,
+    pollIntervalMs = 60,
+    minStableFrames = 3,
+    checksumEpsilon = 1500,
+    maxHamming = 6,
+    requireNewFrames = true,
+  }: { timeoutMs?: number; pollIntervalMs?: number; minStableFrames?: number; checksumEpsilon?: number; maxHamming?: number; requireNewFrames?: boolean } = {}
 ) => {
   const start = Date.now()
   const stableCounts = new Map<number, number>()
-  const lastFp = new Map<number, { w: number; h: number; sum: number }>()
+  const lastFp = new Map<number, { w: number; h: number; sum: number; hi: number; lo: number }>()
+
+  const popcount32 = (x: number) => {
+    x >>>= 0
+    let c = 0
+    while (x) {
+      c += x & 1
+      x >>>= 1
+    }
+    return c
+  }
+  const hamming64 = (aHi: number, aLo: number, bHi: number, bLo: number) => {
+    const xHi = (aHi ^ bHi) >>> 0
+    const xLo = (aLo ^ bLo) >>> 0
+    return popcount32(xHi) + popcount32(xLo)
+  }
 
   while (Date.now() - start < timeoutMs) {
     let allStable = true
@@ -547,19 +565,29 @@ const waitForStableFrames = async (
         allStable = false
         continue
       }
+      // Require that the fingerprint reflects a frame newer than when we enabled
+      // painting for this index (prevents instantly declaring stability using stale frames).
+      if (requireNewFrames) {
+        const baseTs = baselineTimestamps?.get(idx) ?? start
+        if (!fp.updatedAt || fp.updatedAt <= baseTs) {
+          allStable = false
+          continue
+        }
+      }
       const prev = lastFp.get(idx)
       if (!prev) {
-        lastFp.set(idx, { w: fp.width, h: fp.height, sum: fp.checksum })
+        lastFp.set(idx, { w: fp.width, h: fp.height, sum: fp.checksum, hi: fp.hashHi, lo: fp.hashLo })
         stableCounts.set(idx, 0)
         allStable = false
       } else {
         const sameDims = prev.w === fp.width && prev.h === fp.height
         const closeSum = Math.abs((fp.checksum >>> 0) - (prev.sum >>> 0)) <= checksumEpsilon
-        if (sameDims && closeSum) {
+        const ham = hamming64(prev.hi >>> 0, prev.lo >>> 0, fp.hashHi >>> 0, fp.hashLo >>> 0)
+        if (sameDims && closeSum && ham <= maxHamming) {
           const c = (stableCounts.get(idx) || 0) + 1
           stableCounts.set(idx, c)
         } else {
-          lastFp.set(idx, { w: fp.width, h: fp.height, sum: fp.checksum })
+          lastFp.set(idx, { w: fp.width, h: fp.height, sum: fp.checksum, hi: fp.hashHi, lo: fp.hashLo })
           stableCounts.set(idx, 0)
           allStable = false
         }
@@ -568,6 +596,85 @@ const waitForStableFrames = async (
 
     if (allStable && indices.every((i) => (stableCounts.get(i) || 0) >= minStableFrames)) {
       return true
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs))
+  }
+  return false
+}
+
+// Compute a simple 64-bit aHash over BGRA pixels
+function computeAhash64BGRA(buf: Uint8Array, width: number, height: number) {
+  const cols = 8
+  const rows = 8
+  const stepX = Math.max(1, Math.floor(width / cols))
+  const stepY = Math.max(1, Math.floor(height / rows))
+  const samples: number[] = new Array(cols * rows)
+  let k = 0
+  for (let ry = 0; ry < rows; ry++) {
+    const y = Math.min(height - 1, Math.floor(ry * stepY + stepY / 2))
+    for (let cx = 0; cx < cols; cx++) {
+      const x = Math.min(width - 1, Math.floor(cx * stepX + stepX / 2))
+      const idx = (y * width + x) * 4
+      const b = buf[idx + 0] || 0
+      const g = buf[idx + 1] || 0
+      const r = buf[idx + 2] || 0
+      const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) | 0
+      samples[k++] = lum
+    }
+  }
+  let avg = 0
+  for (let i = 0; i < samples.length; i++) avg += samples[i]
+  avg = Math.max(1, Math.floor(avg / samples.length))
+  let hi = 0 >>> 0
+  let lo = 0 >>> 0
+  for (let i = 0; i < samples.length; i++) {
+    const bit = samples[i] > avg ? 1 : 0
+    if (i < 32) hi = ((hi << 1) | bit) >>> 0
+    else lo = ((lo << 1) | bit) >>> 0
+  }
+  return { hi, lo }
+}
+
+function hamming64(aHi: number, aLo: number, bHi: number, bLo: number) {
+  const popcount32 = (x: number) => {
+    x >>>= 0
+    let c = 0
+    while (x) {
+      c += x & 1
+      x >>>= 1
+    }
+    return c
+  }
+  return popcount32((aHi ^ bHi) >>> 0) + popcount32((aLo ^ bLo) >>> 0)
+}
+
+// After attaching the BrowserView, ensure the visible content matches the
+// offscreen texture we intend to show. Keep the canvas visible until match.
+async function waitForBrowserViewSync(index: number, {
+  timeoutMs = 800,
+  pollIntervalMs = 80,
+  maxHamming = 6,
+}: { timeoutMs?: number; pollIntervalMs?: number; maxHamming?: number } = {}) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const fp = getFrameFingerprint(index)
+      if (!fp) break
+      const capture = await window.ipcRenderer.invoke('capture-browser-view', index)
+      if (capture && capture.buffer && capture.size) {
+        const size = capture.size as any
+        const backingW = size.backingWidth || size.width
+        const backingH = size.backingHeight || size.height
+        const buf = capture.buffer instanceof Uint8Array ? capture.buffer : new Uint8Array(capture.buffer)
+        const { hi, lo } = computeAhash64BGRA(buf, backingW, backingH)
+        const ham = hamming64(fp.hashHi >>> 0, fp.hashLo >>> 0, hi >>> 0, lo >>> 0)
+        const sameDims = fp.width === backingW && fp.height === backingH
+        if (sameDims && ham <= maxHamming) {
+          return true
+        }
+      }
+    } catch (err) {
+      console.debug('[Threewebview] waitForBrowserViewSync capture failed', err)
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs))
   }
@@ -718,17 +825,19 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     console.log(`[Threewebview] Enabling painting for transition pages: ${fromIndex}, ${targetIndex}`)
     const prevTimestamps = new Map<number, number>(textureUpdateTimestamps.value)
     await enablePaintingForIndices([fromIndex, targetIndex])
-    // Wait for both textures to receive a fresh frame to avoid stale data
+    // Wait for both textures to receive at least one fresh frame
     const gotUpdates = await waitForTextureUpdates([fromIndex, targetIndex], prevTimestamps, 3000, 30)
 
-    // Additionally, wait briefly for page content to settle (consecutive similar frames)
-    if (gotUpdates) {
-      const settled = await waitForStableFrames([fromIndex, targetIndex], { timeoutMs: 1200, pollIntervalMs: 60, minStableFrames: 2 })
-      if (!settled) {
-        console.warn('[Threewebview] Proceeding without stability consensus (timeout)')
-      } else {
-        console.log('[Threewebview] ✓ Source and target pages appear visually stable')
-      }
+    // Always attempt stability wait; require frames newer than prevTimestamps
+    const settled = await waitForStableFrames(
+      [fromIndex, targetIndex],
+      prevTimestamps,
+      { timeoutMs: 1500, pollIntervalMs: 60, minStableFrames: 2, requireNewFrames: true },
+    )
+    if (!settled) {
+      console.warn('[Threewebview] Proceeding without stability consensus (timeout)')
+    } else {
+      console.log('[Threewebview] ✓ Source and target pages appear visually stable')
     }
 
     // If no fresh offscreen frame arrived (common when pages are visually idle),
@@ -940,8 +1049,13 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     if (shouldRestoreBrowserView) {
       // Reattach BrowserView first so there's always content underneath the canvas
       await showBrowserView(store.currentIndex)
-      // Give the BrowserView a moment to attach and paint
-      await new Promise(resolve => setTimeout(resolve, 64))
+      // Give the BrowserView a moment to attach and paint, then ensure it visually
+      // matches the offscreen texture before hiding the canvas.
+      await new Promise((resolve) => setTimeout(resolve, 64))
+      const synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
+      if (!synced) {
+        console.warn('[Threewebview] BrowserView did not fully sync to offscreen texture before timeout')
+      }
       // Now hide the canvas to avoid a black gap between layers
       showCanvas.value = false
     }
