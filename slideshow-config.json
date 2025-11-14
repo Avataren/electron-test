@@ -40,7 +40,7 @@
       "enabled": true
     }
   ],
-  "transition-webpage-fps": 10,
+  "transition-webpage-fps": 1,
   "slideshow-page-duration": "5s",
   "auto-open-devtools": true,
   "transition-duration": "3s"

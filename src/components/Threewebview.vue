@@ -37,6 +37,7 @@ let needsRender = false
 // Resize overlay state to prevent visible BrowserView flicker during window resize
 let resizeOverlayActive = false
 let resizeSettleTimer: number | null = null
+let keepAliveTimer: number | null = null
 
 // Default transition duration if none provided by main (seconds)
 let transitionDurationSeconds = 1
@@ -955,17 +956,17 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       return
     }
 
-    // Freeze painting for the two pages participating in this transition so
-    // their textures don't change mid-animation (e.g., due to live content or
-    // late DPR adjustments). We'll re-enable/leave disabled according to the
-    // normal post-transition flow below.
+    // Freeze only the SOURCE painting so its texture remains constant during
+    // the overlay animation. Keep TARGET painting enabled so it can continue
+    // to advance; we'll reveal the real BrowserView underneath the overlay,
+    // removing the need to perfectly match plane vs. BrowserView pixels.
     try {
-      await disablePaintingForIndices([fromIndex, targetIndex])
+      await disablePaintingForIndices([fromIndex])
       console.info(
-        `[Threewebview] Frozen offscreen painting for transition indices: ${fromIndex}, ${targetIndex}`,
+        `[Threewebview] Frozen offscreen painting for source index: ${fromIndex}`,
       )
     } catch (err) {
-      console.warn('[Threewebview] Failed to freeze offscreen painting before transition', err)
+      console.warn('[Threewebview] Failed to freeze source painting before transition', err)
     }
 
     if (shouldRunVisualTransition) {
@@ -986,7 +987,8 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       store.setCurrentIndex(targetIndex)
       // Create transition overlay (shows FROM texture at renderOrder 1000)
       transitionManager.startTransition(type, fromIndex, fromPlane.position)
-      // NOW make target visible (it will be underneath the overlay)
+      // Make the target plane visible beneath the overlay so the transition
+      // animates between FROM overlay and TO plane as before.
       targetPlane.visible = true
 
       // Hide the source plane (overlay now shows the FROM texture)
@@ -997,6 +999,9 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       if (renderer.value && scene.value && camera.value) {
         renderer.value.render(scene.value, camera.value)
       }
+
+      // Keep BrowserViews hidden during the overlay animation; we will
+      // reattach the correct BrowserView in the finally block.
 
       // Keep BrowserViews hidden during the overlay animation as before; they
       // are reattached in the finally block after transition completes.
@@ -1125,9 +1130,46 @@ const refreshWebviews = async () => {
     console.log('Skipping refresh: busy or not ready')
     return
   }
-  console.log('Refreshing all webviews')
+  console.log('Refreshing all webviews (keeping BrowserView in sync)')
+  const current = store.currentIndex
   for (let i = 0; i < urls.value.length; i++) {
-    await window.ipcRenderer.invoke('reload-webview', i)
+    try {
+      if (i === current) {
+        // Reload the visible BrowserView so it stays in lockstep with its
+        // corresponding offscreen window and avoids drift over time.
+        await window.ipcRenderer.invoke('reload-browser-view', i)
+      } else {
+        await window.ipcRenderer.invoke('reload-webview', i)
+      }
+    } catch (err) {
+      console.warn('[Threewebview] Failed to refresh index', i, err)
+    }
+  }
+}
+
+// Periodic low-duty pulse to keep upcoming offscreen pages from falling far behind
+// dynamic BrowserView content (animations that depend on rAF). This enables painting
+// briefly for the next slide so the page advances, then disables again. Keeps IPC
+// traffic low while reducing desync.
+const pulseOffscreenProgress = async () => {
+  if (performanceMode.value || store.isTransitioning || !allTexturesLoaded.value) return
+  try {
+    const n = urls.value.length
+    if (!n) return
+    const nextIdx = (store.currentIndex + 1) % n
+    // Enable painting for the next slide briefly
+    await enablePaintingForIndices([nextIdx])
+    await new Promise((r) => setTimeout(r, 200))
+  } catch (err) {
+    console.debug('[Threewebview] keepAlive pulse failed', err)
+  } finally {
+    try {
+      const n = urls.value.length
+      if (n) {
+        const nextIdx = (store.currentIndex + 1) % n
+        await disablePaintingForIndices([nextIdx])
+      }
+    } catch {}
   }
 }
 
@@ -1333,6 +1375,13 @@ onMounted(async () => {
     await handleSetupComplete()
     // Texture loading and timer starting now handled by checkAllTexturesLoaded()
   })
+
+  // Start a periodic keep-alive pulse to reduce drift for dynamic sites
+  if (!performanceMode.value) {
+    keepAliveTimer = window.setInterval(() => {
+      void pulseOffscreenProgress()
+    }, 8000) // every 8 seconds
+  }
 })
 
 onUnmounted(() => {
@@ -1372,6 +1421,10 @@ onUnmounted(() => {
         plane.material.dispose()
       }
     })
+  }
+  if (keepAliveTimer !== null) {
+    clearInterval(keepAliveTimer)
+    keepAliveTimer = null
   }
 })
 </script>
