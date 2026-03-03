@@ -69,12 +69,12 @@ export function useWebviewFrames(
       }
     }
     let avg = 0
-    for (let i = 0; i < samples.length; i++) avg += samples[i]
+    for (let i = 0; i < samples.length; i++) avg += samples[i] ?? 0
     avg = Math.max(1, Math.floor(avg / samples.length))
     let hi = 0 >>> 0
     let lo = 0 >>> 0
     for (let i = 0; i < samples.length; i++) {
-      const bit = samples[i] > avg ? 1 : 0
+      const bit = (samples[i] ?? 0) > avg ? 1 : 0
       if (i < 32) {
         hi = ((hi << 1) | bit) >>> 0
       } else {
@@ -103,12 +103,12 @@ export function useWebviewFrames(
       }
     }
     let avg = 0
-    for (let i = 0; i < samples.length; i++) avg += samples[i]
+    for (let i = 0; i < samples.length; i++) avg += samples[i] ?? 0
     avg = Math.max(1, Math.floor(avg / samples.length))
     let hi = 0 >>> 0
     let lo = 0 >>> 0
     for (let i = 0; i < samples.length; i++) {
-      const bit = samples[i] > avg ? 1 : 0
+      const bit = (samples[i] ?? 0) > avg ? 1 : 0
       if (i < 32) {
         hi = ((hi << 1) | bit) >>> 0
       } else {
@@ -609,7 +609,7 @@ export function useWebviewFrames(
           let cnt = 0
           for (let i = 0; i < pxCount; i += stride) {
             const j = i * 4
-            sum = (sum + image.data[j] + image.data[j + 1] + image.data[j + 2] + image.data[j + 3]) >>> 0
+            sum = (sum + (image.data[j] ?? 0) + (image.data[j + 1] ?? 0) + (image.data[j + 2] ?? 0) + (image.data[j + 3] ?? 0)) >>> 0
             cnt++
           }
           const checksum = (sum ^ (targetWidth << 12) ^ targetHeight) >>> 0

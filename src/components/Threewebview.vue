@@ -624,12 +624,12 @@ function computeAhash64BGRA(buf: Uint8Array, width: number, height: number) {
     }
   }
   let avg = 0
-  for (let i = 0; i < samples.length; i++) avg += samples[i]
+  for (let i = 0; i < samples.length; i++) avg += samples[i] ?? 0
   avg = Math.max(1, Math.floor(avg / samples.length))
   let hi = 0 >>> 0
   let lo = 0 >>> 0
   for (let i = 0; i < samples.length; i++) {
-    const bit = samples[i] > avg ? 1 : 0
+    const bit = (samples[i] ?? 0) > avg ? 1 : 0
     if (i < 32) hi = ((hi << 1) | bit) >>> 0
     else lo = ((lo << 1) | bit) >>> 0
   }
