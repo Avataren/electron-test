@@ -7,7 +7,7 @@ export class PixelateTransition extends BaseTransition {
   private lastTextureWidth = 0
   private lastTextureHeight = 0
   private textureRef: THREE.Texture | null = null
-  private prevMagFilter: number | null = null
+  private prevMagFilter: THREE.MagnificationTextureFilter | null = null
 
   create(fromIndex: number, planePosition: THREE.Vector3): void {
     const { width, height } = this.planeConfig

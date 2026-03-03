@@ -624,12 +624,12 @@ function computeAhash64BGRA(buf: Uint8Array, width: number, height: number) {
     }
   }
   let avg = 0
-  for (let i = 0; i < samples.length; i++) avg += samples[i]
+  for (let i = 0; i < samples.length; i++) avg += samples[i] ?? 0
   avg = Math.max(1, Math.floor(avg / samples.length))
   let hi = 0 >>> 0
   let lo = 0 >>> 0
   for (let i = 0; i < samples.length; i++) {
-    const bit = samples[i] > avg ? 1 : 0
+    const bit = (samples[i] ?? 0) > avg ? 1 : 0
     if (i < 32) hi = ((hi << 1) | bit) >>> 0
     else lo = ((lo << 1) | bit) >>> 0
   }
@@ -756,6 +756,30 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
   return true
 }
 
+// Ask main process for an immediate BrowserView capture and apply it to the
+// corresponding texture so transitions start from the latest visual state.
+const refreshTextureFromBrowserViewCapture = async (index: number, label: string): Promise<boolean> => {
+  try {
+    const capture = await window.ipcRenderer.invoke('capture-browser-view', index)
+    if (!capture || !capture.buffer) {
+      console.warn(`[Threewebview] BrowserView capture for ${label} (${index}) returned no data`)
+      return false
+    }
+
+    const applied = applyFrameToTexture(capture)
+    if (!applied) {
+      console.warn(`[Threewebview] Failed applying BrowserView capture for ${label} (${index})`)
+      return false
+    }
+
+    textureUpdateTimestamps.value.set(index, Date.now())
+    return true
+  } catch (err) {
+    console.warn(`[Threewebview] Failed to capture BrowserView for ${label} (${index})`, err)
+    return false
+  }
+}
+
 const transition = async (targetIndex: number, type: TransitionType) => {
   // Log current state before transition
   console.log(`[Threewebview] ==================== STARTING TRANSITION ====================`)
@@ -845,19 +869,8 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     // fall back to a direct capture of the currently visible BrowserView for the
     // source page to ensure the FROM texture is current.
     if (!gotUpdates) {
-      console.warn('[Threewebview] No fresh offscreen frames detected; capturing visible BrowserView for source')
-      try {
-        const capture = await window.ipcRenderer.invoke('capture-browser-view', fromIndex)
-        if (capture && capture.buffer) {
-          applyFrameToTexture(capture)
-          textureUpdateTimestamps.value.set(fromIndex, Date.now())
-          console.log('[Threewebview] Applied BrowserView capture to source texture')
-        } else {
-          console.warn('[Threewebview] BrowserView capture returned no data; proceeding with existing texture')
-        }
-      } catch (err) {
-        console.warn('[Threewebview] Failed to capture BrowserView for source', err)
-      }
+      console.warn('[Threewebview] No fresh offscreen frames detected; capturing BrowserView for source')
+      await refreshTextureFromBrowserViewCapture(fromIndex, 'source')
     }
 
     // Validate SOURCE texture - using continuously updated offscreen window texture
@@ -973,6 +986,10 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       // Canvas is already visible from earlier, now setup the transition scene
     }
 
+    // Force one last up-to-date capture of the target just before creating the
+    // transition overlay, so the TO texture doesn't start from stale visuals.
+    await refreshTextureFromBrowserViewCapture(targetIndex, 'target pre-transition')
+
     // Setup scene atomically to prevent rendering intermediate states
     if (shouldRunVisualTransition && transitionManager) {
       // CRITICAL: Temporarily stop the render loop to prevent race conditions
@@ -1052,16 +1069,30 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     })
   } finally {
     if (shouldRestoreBrowserView) {
-      // Reattach BrowserView first so there's always content underneath the canvas
+      // Reattach BrowserView first so there's always content underneath the canvas.
       await showBrowserView(store.currentIndex)
-      // Give the BrowserView a moment to attach and paint, then ensure it visually
-      // matches the offscreen texture before hiding the canvas.
+
+      // Give Electron a short window to attach/paint the BrowserView, then compare
+      // a capture against the texture we just animated. If sync is slow, keep the
+      // canvas visible a little longer to avoid exposing a black frame.
       await new Promise((resolve) => setTimeout(resolve, 64))
-      const synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
+      let synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
       if (!synced) {
-        console.warn('[Threewebview] BrowserView did not fully sync to offscreen texture before timeout')
+        console.warn('[Threewebview] BrowserView did not fully sync to offscreen texture before timeout; retrying once')
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 500, pollIntervalMs: 60, maxHamming: 8 })
       }
-      // Now hide the canvas to avoid a black gap between layers
+
+      // Hand off on a frame boundary to avoid a one-frame compositor hole.
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+
+      if (!synced) {
+        // Best-effort fallback: keep the overlay for one extra beat rather than
+        // dropping immediately to a potentially unpainted BrowserView.
+        await new Promise((resolve) => setTimeout(resolve, 80))
+      }
+
       showCanvas.value = false
     }
 
