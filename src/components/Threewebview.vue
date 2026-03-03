@@ -659,13 +659,19 @@ async function waitForBrowserViewSync(index: number, {
   timeoutMs = 800,
   pollIntervalMs = 80,
   maxHamming = 6,
-}: { timeoutMs?: number; pollIntervalMs?: number; maxHamming?: number } = {}) {
+  captureTimeoutMs = 350,
+}: { timeoutMs?: number; pollIntervalMs?: number; maxHamming?: number; captureTimeoutMs?: number } = {}) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {
       const fp = getFrameFingerprint(index)
       if (!fp) break
-      const capture = await window.ipcRenderer.invoke('capture-browser-view-if-attached', index)
+      const timedOut = Symbol('capture-timeout')
+      const captureOrTimeout = await Promise.race([
+        window.ipcRenderer.invoke('capture-browser-view-if-attached', index),
+        new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), captureTimeoutMs)),
+      ])
+      const capture = captureOrTimeout !== timedOut ? (captureOrTimeout as any) : null
       if (capture && capture.buffer && capture.size) {
         const size = capture.size as any
         const backingW = size.backingWidth || size.width
