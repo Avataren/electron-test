@@ -762,15 +762,34 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
 
 // Ask main process for an immediate BrowserView capture and apply it to the
 // corresponding texture so transitions start from the latest visual state.
-const refreshTextureFromBrowserViewCapture = async (index: number, label: string): Promise<boolean> => {
+// The capture is time-bounded so a stuck IPC call cannot stall transitions.
+const refreshTextureFromBrowserViewCapture = async (
+  index: number,
+  label: string,
+  timeoutMs = 450,
+): Promise<boolean> => {
   try {
-    const capture = await window.ipcRenderer.invoke('capture-browser-view', index)
+    const timedOut = Symbol('capture-timeout')
+    const captureOrTimeout = await Promise.race([
+      window.ipcRenderer.invoke('capture-browser-view', index),
+      new Promise<typeof timedOut>((resolve) => {
+        setTimeout(() => resolve(timedOut), timeoutMs)
+      }),
+    ])
+
+    if (captureOrTimeout === timedOut) {
+      console.warn(`[Threewebview] BrowserView capture timed out for ${label} (${index}) after ${timeoutMs}ms`)
+      return false
+    }
+
+    const capture = captureOrTimeout as any
     if (!capture || !capture.buffer) {
       console.warn(`[Threewebview] BrowserView capture for ${label} (${index}) returned no data`)
       return false
     }
 
-    const applied = applyFrameToTexture(capture)
+    const captureFrame = { ...capture, index: capture.index ?? index }
+    const applied = applyFrameToTexture(captureFrame)
     if (!applied) {
       console.warn(`[Threewebview] Failed applying BrowserView capture for ${label} (${index})`)
       return false
