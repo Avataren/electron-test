@@ -164,7 +164,7 @@ export class IPCHandlers {
       }
     })
 
-    // Capture page from BrowserView directly
+    // Capture page from BrowserView directly (may temporarily attach detached view)
     ipcMain.handle('capture-browser-view', async (event, index: number) => {
       const captureResult = await this.viewManager.capturePage(index)
       if (!captureResult) {
@@ -205,6 +205,40 @@ export class IPCHandlers {
           backingHeight              // Physical pixels (calculated from bitmap size)
         },
         format: 'raw'
+      }
+    })
+
+    // Capture only if the BrowserView is currently attached.
+    // This avoids mutating view attachment state during transitions.
+    ipcMain.handle('capture-browser-view-if-attached', async (event, index: number) => {
+      const captureResult = await this.viewManager.capturePageIfAttached(index)
+      if (!captureResult) {
+        return null
+      }
+
+      const { bitmap, imageSize } = captureResult
+      const bounds = await this.getBrowserViewSize(index)
+      if (!bounds) {
+        return null
+      }
+
+      const bytesPerPixel = 4
+      const actualPixelCount = bitmap.length / bytesPerPixel
+      const cssPixelCount = imageSize.width * imageSize.height
+      const scaleFactor = Math.sqrt(actualPixelCount / cssPixelCount)
+      const backingWidth = Math.round(imageSize.width * scaleFactor)
+      const backingHeight = Math.round(imageSize.height * scaleFactor)
+
+      return {
+        index,
+        buffer: bitmap,
+        size: {
+          width: bounds.width,
+          height: bounds.height,
+          backingWidth,
+          backingHeight,
+        },
+        format: 'raw',
       }
     })
 
@@ -356,6 +390,7 @@ export class IPCHandlers {
     ipcMain.removeHandler('disable-painting')
     ipcMain.removeAllListeners('mirror-input')
     ipcMain.removeHandler('capture-browser-view')
+    ipcMain.removeHandler('capture-browser-view-if-attached')
     ipcMain.removeHandler('show-browser-view')
     ipcMain.removeHandler('hide-browser-views')
       ipcMain.removeAllListeners('initial-frame-ack')

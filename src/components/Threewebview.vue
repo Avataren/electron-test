@@ -665,7 +665,7 @@ async function waitForBrowserViewSync(index: number, {
     try {
       const fp = getFrameFingerprint(index)
       if (!fp) break
-      const capture = await window.ipcRenderer.invoke('capture-browser-view', index)
+      const capture = await window.ipcRenderer.invoke('capture-browser-view-if-attached', index)
       if (capture && capture.buffer && capture.size) {
         const size = capture.size as any
         const backingW = size.backingWidth || size.width
@@ -771,7 +771,7 @@ const refreshTextureFromBrowserViewCapture = async (
   try {
     const timedOut = Symbol('capture-timeout')
     const captureOrTimeout = await Promise.race([
-      window.ipcRenderer.invoke('capture-browser-view', index),
+      window.ipcRenderer.invoke('capture-browser-view-if-attached', index),
       new Promise<typeof timedOut>((resolve) => {
         setTimeout(() => resolve(timedOut), timeoutMs)
       }),

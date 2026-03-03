@@ -264,6 +264,37 @@ export class ViewManager {
     return null
   }
 
+  async capturePageIfAttached(index: number): Promise<{ bitmap: Buffer; imageSize: { width: number; height: number } } | null> {
+    const view = this.views.get(index)
+    if (!view) {
+      console.warn(`[ViewManager] Cannot capture (attached-only): view ${index} not found`)
+      return null
+    }
+
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      console.warn(`[ViewManager] Cannot capture (attached-only): main window not available`)
+      return null
+    }
+
+    const currentViews = this.mainWindow.getBrowserViews()
+    const isAttached = currentViews.some(v => v === view)
+    if (!isAttached) {
+      return null
+    }
+
+    try {
+      const image = await view.webContents.capturePage()
+      const size = image.getSize()
+      return {
+        bitmap: image.toBitmap(),
+        imageSize: size,
+      }
+    } catch (err) {
+      console.error(`[ViewManager] Failed attached-only capture for page ${index}:`, err)
+      return null
+    }
+  }
+
   async capturePage(index: number): Promise<{ bitmap: Buffer; imageSize: { width: number; height: number } } | null> {
     const view = this.views.get(index)
     if (!view) {
