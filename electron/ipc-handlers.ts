@@ -294,6 +294,15 @@ export class IPCHandlers {
         console.warn('[IPC] failed to log renderer-error', err)
       }
     })
+
+    // Forward renderer debug logs to main process console
+    ipcMain.on('renderer-log', (_event, data) => {
+      try {
+        console.log('[Renderer]', data)
+      } catch (err) {
+        console.warn('[IPC] failed to log renderer-log', err)
+      }
+    })
   }
 
   private async getBrowserViewSize(index: number): Promise<{ width: number; height: number; backingWidth?: number; backingHeight?: number } | null> {

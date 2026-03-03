@@ -31,6 +31,14 @@ const planes: THREE.Mesh[] = []
 const textures: THREE.Texture[] = []
 let transitionManager: TransitionManager | null = null
 const win: any = window
+
+// Helper to send logs to main process (shows in terminal)
+const logToMain = (message: string) => {
+  console.log(message)
+  try {
+    win.ipcRenderer?.send('renderer-log', message)
+  } catch {}
+}
 let renderStatCounter = 0
 let animationFrameId: number | null = null
 let needsRender = false
@@ -423,12 +431,20 @@ function runRenderLoop() {
 
   if (transitionManager && transitionManager.hasActiveTransition()) {
     shouldContinue = true
-    const isComplete = transitionManager.update()
-    needsRender = true
-    if (isComplete) {
-      console.log(
-        `Transition complete. Current: ${store.currentIndex}. Offscreen painting remains disabled until next capture.`,
-      )
+    try {
+      const isComplete = transitionManager.update()
+      needsRender = true
+      if (isComplete) {
+        console.log(
+          `Transition complete. Current: ${store.currentIndex}. Offscreen painting remains disabled until next capture.`,
+        )
+      }
+    } catch (err) {
+      console.error('[Threewebview] Error in transitionManager.update():', err)
+      // Force cleanup on error to prevent infinite loop
+      try {
+        transitionManager.cleanup()
+      } catch {}
     }
   }
 
@@ -1016,6 +1032,8 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
     // Setup scene atomically to prevent rendering intermediate states
     if (shouldRunVisualTransition && transitionManager) {
+      logToMain(`[Threewebview] Setting up visual transition: ${fromIndex} -> ${targetIndex}, type=${type}`)
+
       // CRITICAL: Temporarily stop the render loop to prevent race conditions
       // during scene setup. Cancel any pending animation frame.
       if (animationFrameId !== null) {
@@ -1027,7 +1045,14 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       // Update currentIndex before overlay creation to restore previous working flow
       store.setCurrentIndex(targetIndex)
       // Create transition overlay (shows FROM texture at renderOrder 1000)
-      transitionManager.startTransition(type, fromIndex, fromPlane.position)
+      logToMain(`[Threewebview] Starting transition overlay...`)
+      try {
+        transitionManager.startTransition(type, fromIndex, fromPlane.position)
+        logToMain(`[Threewebview] Transition overlay created, hasActiveTransition=${transitionManager.hasActiveTransition()}`)
+      } catch (err) {
+        logToMain(`[Threewebview] Failed to start transition: ${err}`)
+        throw err
+      }
       // Make the target plane visible beneath the overlay so the transition
       // animates between FROM overlay and TO plane as before.
       targetPlane.visible = true
@@ -1049,7 +1074,9 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
       // CRITICAL: NOW schedule renders to animate the transition
       // The render loop will call transitionManager.update() on each frame
+      logToMain(`[Threewebview] Scheduling render loop for transition animation...`)
       scheduleRender()
+      logToMain(`[Threewebview] Render loop scheduled, animationFrameId=${animationFrameId}`)
     } else {
       // Non-transition path
       targetPlane.visible = true
@@ -1067,22 +1094,38 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     // actual transition duration (framerate drops or different transition
     // timings) and leave residues on the destination image. Instead poll
     // the TransitionManager for completion with a sensible fallback timeout.
+    logToMain(`[Threewebview] Waiting for transition to complete...`)
     await new Promise<void>((resolve) => {
       const maxWait = 10000 // restore prior 10s fallback
       const interval = 100
       let waited = 0
+      let lastLogTime = 0
 
       const check = () => {
         // If transitionManager is missing for some reason, stop waiting
-        if (!transitionManager) return resolve()
+        if (!transitionManager) {
+          logToMain(`[Threewebview] Transition wait: no transitionManager, resolving`)
+          return resolve()
+        }
 
-        if (!transitionManager.hasActiveTransition()) {
+        const hasActive = transitionManager.hasActiveTransition()
+        if (!hasActive) {
+          logToMain(`[Threewebview] Transition wait: no active transition, resolving after ${waited}ms`)
           return resolve()
         }
 
         waited += interval
+        // Log every second
+        if (waited - lastLogTime >= 1000) {
+          logToMain(`[Threewebview] Transition wait: still active after ${waited}ms, animationFrameId=${animationFrameId}`)
+          lastLogTime = waited
+        }
+
         if (waited >= maxWait) {
-          console.warn('Transition wait timed out after', maxWait, 'ms')
+          logToMain(`[Threewebview] Transition wait timed out after ${maxWait}ms - FORCING CLEANUP`)
+          try {
+            transitionManager.cleanup()
+          } catch {}
           return resolve()
         }
 
@@ -1091,37 +1134,55 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
       check()
     })
+    logToMain(`[Threewebview] Transition wait completed`)
   } finally {
-    if (shouldRestoreBrowserView) {
-      // Reattach BrowserView first so there's always content underneath the canvas.
-      await showBrowserView(store.currentIndex)
+    logToMain(`[Threewebview] Transition finally block: shouldRestoreBrowserView=${shouldRestoreBrowserView}, isTransitioning=${store.isTransitioning}`)
+    try {
+      if (shouldRestoreBrowserView) {
+        // Reattach BrowserView first so there's always content underneath the canvas.
+        logToMain(`[Threewebview] Restoring BrowserView for index ${store.currentIndex}`)
+        await showBrowserView(store.currentIndex)
+        logToMain(`[Threewebview] BrowserView restored, starting sync wait...`)
 
-      // Give Electron a short window to attach/paint the BrowserView, then compare
-      // a capture against the texture we just animated. If sync is slow, keep the
-      // canvas visible a little longer to avoid exposing a black frame.
-      await new Promise((resolve) => setTimeout(resolve, 64))
-      let synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
-      if (!synced) {
-        console.warn('[Threewebview] BrowserView did not fully sync to offscreen texture before timeout; retrying once')
-        await new Promise((resolve) => setTimeout(resolve, 120))
-        synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 500, pollIntervalMs: 60, maxHamming: 8 })
+        // Give Electron a short window to attach/paint the BrowserView, then compare
+        // a capture against the texture we just animated. If sync is slow, keep the
+        // canvas visible a little longer to avoid exposing a black frame.
+        await new Promise((resolve) => setTimeout(resolve, 64))
+        logToMain(`[Threewebview] Starting waitForBrowserViewSync...`)
+        let synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
+        logToMain(`[Threewebview] waitForBrowserViewSync returned: ${synced}`)
+        if (!synced) {
+          logToMain('[Threewebview] BrowserView did not fully sync, retrying once')
+          await new Promise((resolve) => setTimeout(resolve, 120))
+          synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 500, pollIntervalMs: 60, maxHamming: 8 })
+          logToMain(`[Threewebview] Retry waitForBrowserViewSync returned: ${synced}`)
+        }
+
+        // Give compositor time to settle before hiding canvas
+        // Note: Using setTimeout instead of requestAnimationFrame because rAF
+        // may not fire when the render loop is stopped and canvas is hidden
+        logToMain(`[Threewebview] Waiting for compositor to settle...`)
+        await new Promise((resolve) => setTimeout(resolve, 32))
+        await new Promise((resolve) => setTimeout(resolve, 32))
+        logToMain(`[Threewebview] Compositor settle complete`)
+
+        if (!synced) {
+          // Best-effort fallback: keep the overlay for one extra beat rather than
+          // dropping immediately to a potentially unpainted BrowserView.
+          await new Promise((resolve) => setTimeout(resolve, 80))
+        }
+
+        showCanvas.value = false
+        logToMain(`[Threewebview] Canvas hidden`)
       }
-
-      // Hand off on a frame boundary to avoid a one-frame compositor hole.
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
-
-      if (!synced) {
-        // Best-effort fallback: keep the overlay for one extra beat rather than
-        // dropping immediately to a potentially unpainted BrowserView.
-        await new Promise((resolve) => setTimeout(resolve, 80))
-      }
-
-      showCanvas.value = false
+    } catch (err) {
+      logToMain(`[Threewebview] ERROR in finally block: ${err}`)
     }
 
     // NOW set transitioning to false - after everything is truly complete
+    logToMain(`[Threewebview] Setting isTransitioning to false...`)
     store.setTransitioning(false)
+    logToMain(`[Threewebview] isTransitioning is now: ${store.isTransitioning}`)
 
     // CRITICAL: Check if window was resized during transition
     // If so, we need to update the renderer/camera/planes now
@@ -1159,20 +1220,22 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 }
 
 const rotateWebview = () => {
+  logToMain(`[Threewebview] rotateWebview called: allTexturesLoaded=${allTexturesLoaded.value}, isTransitioning=${store.isTransitioning}, currentIndex=${store.currentIndex}`)
+
   if (!allTexturesLoaded.value) {
-    console.log('Skipping rotation: textures not loaded')
+    logToMain('Skipping rotation: textures not loaded')
     return
   }
 
   if (store.isTransitioning) {
-    console.log('Skipping rotation: transition in progress')
+    logToMain('Skipping rotation: transition in progress')
     return
   }
 
   const nextIndex = (store.currentIndex + 1) % urls.value.length
   const nextType = transitionManager?.getNextType() || 'rain'
 
-  console.log(`Rotate: current=${store.currentIndex}, next=${nextIndex}, type=${nextType}`)
+  logToMain(`Rotate: current=${store.currentIndex}, next=${nextIndex}, type=${nextType}`)
 
   transition(nextIndex, nextType)
   if (transitionsEnabled) {
@@ -1229,10 +1292,11 @@ const pulseOffscreenProgress = async () => {
 }
 
 const checkAllTexturesLoaded = () => {
+  logToMain(`[Threewebview] checkAllTexturesLoaded: loaded=${loadedTextures.value.size}/${urls.value.length}, allLoaded=${allTexturesLoaded.value}`)
   if (loadedTextures.value.size === urls.value.length && !allTexturesLoaded.value) {
     allTexturesLoaded.value = true
     isInitialLoading.value = false
-    console.log('🎉 All textures loaded, starting slideshow')
+    logToMain('🎉 All textures loaded, starting slideshow')
     scheduleRender()
 
     // CRITICAL: Check if window was resized during initial loading

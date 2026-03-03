@@ -65,6 +65,7 @@ export class TransitionManager {
   }
 
   startTransition(type: TransitionType, fromIndex: number, planePosition: THREE.Vector3): void {
+    console.log(`[TransitionManager] startTransition: type=${type}, fromIndex=${fromIndex}`)
     this.cleanup()
 
     switch (type) {
@@ -94,25 +95,56 @@ export class TransitionManager {
         break
       default:
         // Fall back to pixelate if unknown type
+        console.warn(`[TransitionManager] Unknown transition type '${type}', falling back to pixelate`)
         this.currentTransition = new PixelateTransition(this.scene, this.textures, this.planeConfig, this.durationSeconds)
     }
 
     if (this.currentTransition) {
-      this.currentTransition.create(fromIndex, planePosition)
+      console.log(`[TransitionManager] Creating transition overlay...`)
+      try {
+        this.currentTransition.create(fromIndex, planePosition)
+        console.log(`[TransitionManager] Transition overlay created successfully`)
+      } catch (err) {
+        console.error(`[TransitionManager] Failed to create transition:`, err)
+        this.currentTransition = null
+        throw err
+      }
       this.currentType = type
+    } else {
+      console.error(`[TransitionManager] Failed to instantiate transition of type '${type}'`)
     }
   }
 
+  private updateCallCount = 0
+
   update(): boolean {
-    if (!this.currentTransition) return true
-
-    const isComplete = this.currentTransition.update()
-
-    if (isComplete) {
-      this.cleanup()
+    if (!this.currentTransition) {
+      console.warn(`[TransitionManager] update() called but no currentTransition exists`)
+      return true
     }
 
-    return isComplete
+    this.updateCallCount++
+    try {
+      const isComplete = this.currentTransition.update()
+
+      // Log every 60th frame (roughly once per second) to avoid spam
+      if (this.updateCallCount % 60 === 0 || isComplete) {
+        console.log(`[TransitionManager] update() frame ${this.updateCallCount}, isComplete=${isComplete}`)
+      }
+
+      if (isComplete) {
+        console.log(`[TransitionManager] Transition complete after ${this.updateCallCount} frames, cleaning up`)
+        this.updateCallCount = 0
+        this.cleanup()
+      }
+
+      return isComplete
+    } catch (err) {
+      console.error(`[TransitionManager] Error in transition update():`, err)
+      this.updateCallCount = 0
+      this.cleanup()
+      return true // Force completion on error
+    }
   }
 
   cleanup(): void {
