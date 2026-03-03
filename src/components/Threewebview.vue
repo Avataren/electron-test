@@ -151,9 +151,13 @@ const pageAspect = ref<number | null>(null)
         console.warn('[Threewebview] Failed to check/cap backing size', err)
       }
 
-      // Update if we haven't sized yet or aspect changed by more than 0.5%
+      // Update if we haven't sized yet or aspect changed by more than 0.5%.
+      // Avoid changing plane geometry while a transition overlay is running,
+      // otherwise the scene can "pop" to a new aspect mid-transition.
       const shouldUpdate =
-        !pageAspect.value || Math.abs((reportedAspect - pageAspect.value) / (pageAspect.value || 1)) > 0.005
+        !store.isTransitioning && (
+          !pageAspect.value || Math.abs((reportedAspect - pageAspect.value) / (pageAspect.value || 1)) > 0.005
+        )
 
       if (shouldUpdate) {
         pageAspect.value = reportedAspect
@@ -661,7 +665,7 @@ async function waitForBrowserViewSync(index: number, {
     try {
       const fp = getFrameFingerprint(index)
       if (!fp) break
-      const capture = await window.ipcRenderer.invoke('capture-browser-view', index)
+      const capture = await window.ipcRenderer.invoke('capture-browser-view-if-attached', index)
       if (capture && capture.buffer && capture.size) {
         const size = capture.size as any
         const backingW = size.backingWidth || size.width
@@ -756,6 +760,49 @@ const captureTexturesForTransition = async (indices: number[]): Promise<boolean>
   return true
 }
 
+// Ask main process for an immediate BrowserView capture and apply it to the
+// corresponding texture so transitions start from the latest visual state.
+// The capture is time-bounded so a stuck IPC call cannot stall transitions.
+const refreshTextureFromBrowserViewCapture = async (
+  index: number,
+  label: string,
+  timeoutMs = 450,
+): Promise<boolean> => {
+  try {
+    const timedOut = Symbol('capture-timeout')
+    const captureOrTimeout = await Promise.race([
+      window.ipcRenderer.invoke('capture-browser-view-if-attached', index),
+      new Promise<typeof timedOut>((resolve) => {
+        setTimeout(() => resolve(timedOut), timeoutMs)
+      }),
+    ])
+
+    if (captureOrTimeout === timedOut) {
+      console.warn(`[Threewebview] BrowserView capture timed out for ${label} (${index}) after ${timeoutMs}ms`)
+      return false
+    }
+
+    const capture = captureOrTimeout as any
+    if (!capture || !capture.buffer) {
+      console.warn(`[Threewebview] BrowserView capture for ${label} (${index}) returned no data`)
+      return false
+    }
+
+    const captureFrame = { ...capture, index: capture.index ?? index }
+    const applied = applyFrameToTexture(captureFrame)
+    if (!applied) {
+      console.warn(`[Threewebview] Failed applying BrowserView capture for ${label} (${index})`)
+      return false
+    }
+
+    textureUpdateTimestamps.value.set(index, Date.now())
+    return true
+  } catch (err) {
+    console.warn(`[Threewebview] Failed to capture BrowserView for ${label} (${index})`, err)
+    return false
+  }
+}
+
 const transition = async (targetIndex: number, type: TransitionType) => {
   // Log current state before transition
   console.log(`[Threewebview] ==================== STARTING TRANSITION ====================`)
@@ -845,19 +892,8 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     // fall back to a direct capture of the currently visible BrowserView for the
     // source page to ensure the FROM texture is current.
     if (!gotUpdates) {
-      console.warn('[Threewebview] No fresh offscreen frames detected; capturing visible BrowserView for source')
-      try {
-        const capture = await window.ipcRenderer.invoke('capture-browser-view', fromIndex)
-        if (capture && capture.buffer) {
-          applyFrameToTexture(capture)
-          textureUpdateTimestamps.value.set(fromIndex, Date.now())
-          console.log('[Threewebview] Applied BrowserView capture to source texture')
-        } else {
-          console.warn('[Threewebview] BrowserView capture returned no data; proceeding with existing texture')
-        }
-      } catch (err) {
-        console.warn('[Threewebview] Failed to capture BrowserView for source', err)
-      }
+      console.warn('[Threewebview] No fresh offscreen frames detected; capturing BrowserView for source')
+      await refreshTextureFromBrowserViewCapture(fromIndex, 'source')
     }
 
     // Validate SOURCE texture - using continuously updated offscreen window texture
@@ -941,6 +977,11 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
       // Small delay to ensure canvas is painted
       await new Promise(resolve => setTimeout(resolve, 64))
+
+      // Capture the target while a BrowserView is still attached, so
+      // ViewManager.capturePage() can safely restore prior visibility and we
+      // don't accidentally reattach a view during the hidden-overlay phase.
+      await refreshTextureFromBrowserViewCapture(targetIndex, 'target pre-hide')
 
       // Now that the canvas is visibly presenting the source content, hide BrowserViews
       await hideBrowserViews()
@@ -1052,16 +1093,30 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     })
   } finally {
     if (shouldRestoreBrowserView) {
-      // Reattach BrowserView first so there's always content underneath the canvas
+      // Reattach BrowserView first so there's always content underneath the canvas.
       await showBrowserView(store.currentIndex)
-      // Give the BrowserView a moment to attach and paint, then ensure it visually
-      // matches the offscreen texture before hiding the canvas.
+
+      // Give Electron a short window to attach/paint the BrowserView, then compare
+      // a capture against the texture we just animated. If sync is slow, keep the
+      // canvas visible a little longer to avoid exposing a black frame.
       await new Promise((resolve) => setTimeout(resolve, 64))
-      const synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
+      let synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
       if (!synced) {
-        console.warn('[Threewebview] BrowserView did not fully sync to offscreen texture before timeout')
+        console.warn('[Threewebview] BrowserView did not fully sync to offscreen texture before timeout; retrying once')
+        await new Promise((resolve) => setTimeout(resolve, 120))
+        synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 500, pollIntervalMs: 60, maxHamming: 8 })
       }
-      // Now hide the canvas to avoid a black gap between layers
+
+      // Hand off on a frame boundary to avoid a one-frame compositor hole.
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+
+      if (!synced) {
+        // Best-effort fallback: keep the overlay for one extra beat rather than
+        // dropping immediately to a potentially unpainted BrowserView.
+        await new Promise((resolve) => setTimeout(resolve, 80))
+      }
+
       showCanvas.value = false
     }
 
