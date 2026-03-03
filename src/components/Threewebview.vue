@@ -959,6 +959,11 @@ const transition = async (targetIndex: number, type: TransitionType) => {
       // Small delay to ensure canvas is painted
       await new Promise(resolve => setTimeout(resolve, 64))
 
+      // Capture the target while a BrowserView is still attached, so
+      // ViewManager.capturePage() can safely restore prior visibility and we
+      // don't accidentally reattach a view during the hidden-overlay phase.
+      await refreshTextureFromBrowserViewCapture(targetIndex, 'target pre-hide')
+
       // Now that the canvas is visibly presenting the source content, hide BrowserViews
       await hideBrowserViews()
     }
@@ -989,10 +994,6 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     if (shouldRunVisualTransition) {
       // Canvas is already visible from earlier, now setup the transition scene
     }
-
-    // Force one last up-to-date capture of the target just before creating the
-    // transition overlay, so the TO texture doesn't start from stale visuals.
-    await refreshTextureFromBrowserViewCapture(targetIndex, 'target pre-transition')
 
     // Setup scene atomically to prevent rendering intermediate states
     if (shouldRunVisualTransition && transitionManager) {
