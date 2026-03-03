@@ -151,9 +151,13 @@ const pageAspect = ref<number | null>(null)
         console.warn('[Threewebview] Failed to check/cap backing size', err)
       }
 
-      // Update if we haven't sized yet or aspect changed by more than 0.5%
+      // Update if we haven't sized yet or aspect changed by more than 0.5%.
+      // Avoid changing plane geometry while a transition overlay is running,
+      // otherwise the scene can "pop" to a new aspect mid-transition.
       const shouldUpdate =
-        !pageAspect.value || Math.abs((reportedAspect - pageAspect.value) / (pageAspect.value || 1)) > 0.005
+        !store.isTransitioning && (
+          !pageAspect.value || Math.abs((reportedAspect - pageAspect.value) / (pageAspect.value || 1)) > 0.005
+        )
 
       if (shouldUpdate) {
         pageAspect.value = reportedAspect
