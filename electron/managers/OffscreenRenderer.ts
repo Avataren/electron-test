@@ -115,8 +115,8 @@ export class OffscreenRenderer {
       try {
         win.webContents.sendInputEvent({
           type: 'mouseMove',
-          x: Math.floor(w / 2),
-          y: Math.floor(h / 2),
+          x: Math.floor(w! / 2),
+          y: Math.floor(h! / 2),
           movementX: 0,
           movementY: 0,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

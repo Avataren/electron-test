@@ -96,7 +96,7 @@ describe('PixelateTransition texture dimension handling', () => {
       initialHeight,
       THREE.RGBAFormat,
       THREE.UnsignedByteType
-    )
+    )-
     textures.push(texture)
 
     // Create transition
