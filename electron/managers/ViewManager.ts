@@ -17,6 +17,9 @@ export class ViewManager {
   private devToolsInsets = { top: 0, right: 0, bottom: 0, left: 0 }
   private controlBarVisible = true
   private viewDevToolsWindow: BrowserWindow | null = null
+  // Keep-alive timers: periodic synthetic mouse moves prevent session timeouts
+  private readonly keepAliveTimers: Map<number, NodeJS.Timeout> = new Map()
+  private readonly keepAliveIntervalMs = 30_000
 
   constructor(config: AppConfig) {
     this.config = config
@@ -104,6 +107,10 @@ export class ViewManager {
           preload: preloadPath,
           // Ensure consistent rendering with offscreen windows
           zoomFactor: 1.0,
+          // Prevent Chromium from throttling JS timers and iframe navigation
+          // in non-visible views. Without this, MSAL silent token refresh
+          // iframes time out because their postMessage never gets processed.
+          backgroundThrottling: false,
         },
       })
 
@@ -128,7 +135,37 @@ export class ViewManager {
       }
 
       this.setupViewEventHandlers(view, index, url)
+      this.startKeepAlive(index, view)
     })
+  }
+
+  private startKeepAlive(index: number, view: BrowserView): void {
+    this.stopKeepAlive(index)
+    const timer = setInterval(() => {
+      if (view.webContents.isDestroyed()) return
+      const bounds = view.getBounds()
+      try {
+        view.webContents.sendInputEvent({
+          type: 'mouseMove',
+          x: Math.floor(bounds.width / 2),
+          y: Math.floor(bounds.height / 2),
+          movementX: 0,
+          movementY: 0,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any)
+      } catch (_err) {
+        // Best-effort; ignore if webContents is not ready
+      }
+    }, this.keepAliveIntervalMs)
+    this.keepAliveTimers.set(index, timer)
+  }
+
+  private stopKeepAlive(index: number): void {
+    const t = this.keepAliveTimers.get(index)
+    if (t) {
+      clearInterval(t)
+      this.keepAliveTimers.delete(index)
+    }
   }
 
   private setBounds(view: BrowserView, windowBounds: Rectangle): void {
@@ -235,6 +272,8 @@ export class ViewManager {
 
   cleanup(): void {
     this.clearDevToolsListeners()
+    this.keepAliveTimers.forEach((timer) => clearInterval(timer))
+    this.keepAliveTimers.clear()
     this.views.forEach((view) => {
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.removeBrowserView(view)

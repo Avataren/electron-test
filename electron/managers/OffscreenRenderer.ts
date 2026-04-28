@@ -25,6 +25,9 @@ export class OffscreenRenderer {
   private readonly initialAckTimeouts: Map<number, NodeJS.Timeout> = new Map()
   // How long to wait for an initial-frame ACK before sending a fallback (ms)
   private readonly initialAckTimeoutMs = 4000
+  // Keep-alive timers: periodic synthetic mouse moves prevent session timeouts
+  private readonly keepAliveTimers: Map<number, NodeJS.Timeout> = new Map()
+  private readonly keepAliveIntervalMs = 30_000
   // Track whether SharedArrayBuffer delivery is blocked so we avoid repeated errors
   private sharedBufferDeliveryBlocked = false
   // Track whether ArrayBuffer transfer lists fail so we fall back to IPC send directly
@@ -79,6 +82,10 @@ export class OffscreenRenderer {
           contextIsolation: true,
           // Ensure consistent rendering with BrowserView
           zoomFactor: 1.0,
+          // Prevent Chromium from throttling JS timers and iframe navigation
+          // in hidden windows. Without this, MSAL silent token refresh iframes
+          // time out because their postMessage never gets processed.
+          backgroundThrottling: false,
         },
       })
 
@@ -90,12 +97,43 @@ export class OffscreenRenderer {
 
       this.setupPaintHandler(offscreenWin, index)
       this.setupLoadHandlers(offscreenWin, index, url)
+      this.startKeepAlive(index)
 
       // Only enable painting for the first window initially
       if (index === 0) {
         this.enablePainting(index)
       }
     })
+  }
+
+  private startKeepAlive(index: number): void {
+    this.stopKeepAlive(index)
+    const timer = setInterval(() => {
+      const win = this.windows.get(index)
+      if (!win || win.isDestroyed()) return
+      const [w, h] = win.getSize()
+      try {
+        win.webContents.sendInputEvent({
+          type: 'mouseMove',
+          x: Math.floor(w / 2),
+          y: Math.floor(h / 2),
+          movementX: 0,
+          movementY: 0,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any)
+      } catch (_err) {
+        // Best-effort; ignore if webContents is not ready
+      }
+    }, this.keepAliveIntervalMs)
+    this.keepAliveTimers.set(index, timer)
+  }
+
+  private stopKeepAlive(index: number): void {
+    const t = this.keepAliveTimers.get(index)
+    if (t) {
+      clearInterval(t)
+      this.keepAliveTimers.delete(index)
+    }
   }
 
   private setupPaintHandler(window: BrowserWindow, index: number): void {
@@ -507,6 +545,10 @@ export class OffscreenRenderer {
 
     this.initialAckTimeouts.forEach((timer) => clearTimeout(timer))
     this.initialAckTimeouts.clear()
+
+    this.keepAliveTimers.forEach((timer) => clearInterval(timer))
+    this.keepAliveTimers.clear()
+
     this.arrayBufferPostMessageBlocked = false
   }
 

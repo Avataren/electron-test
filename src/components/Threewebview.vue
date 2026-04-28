@@ -623,85 +623,6 @@ const waitForStableFrames = async (
   return false
 }
 
-// Compute a simple 64-bit aHash over BGRA pixels
-function computeAhash64BGRA(buf: Uint8Array, width: number, height: number) {
-  const cols = 8
-  const rows = 8
-  const stepX = Math.max(1, Math.floor(width / cols))
-  const stepY = Math.max(1, Math.floor(height / rows))
-  const samples: number[] = new Array(cols * rows)
-  let k = 0
-  for (let ry = 0; ry < rows; ry++) {
-    const y = Math.min(height - 1, Math.floor(ry * stepY + stepY / 2))
-    for (let cx = 0; cx < cols; cx++) {
-      const x = Math.min(width - 1, Math.floor(cx * stepX + stepX / 2))
-      const idx = (y * width + x) * 4
-      const b = buf[idx + 0] || 0
-      const g = buf[idx + 1] || 0
-      const r = buf[idx + 2] || 0
-      const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) | 0
-      samples[k++] = lum
-    }
-  }
-  let avg = 0
-  for (let i = 0; i < samples.length; i++) avg += samples[i] ?? 0
-  avg = Math.max(1, Math.floor(avg / samples.length))
-  let hi = 0 >>> 0
-  let lo = 0 >>> 0
-  for (let i = 0; i < samples.length; i++) {
-    const bit = (samples[i] ?? 0) > avg ? 1 : 0
-    if (i < 32) hi = ((hi << 1) | bit) >>> 0
-    else lo = ((lo << 1) | bit) >>> 0
-  }
-  return { hi, lo }
-}
-
-function hamming64(aHi: number, aLo: number, bHi: number, bLo: number) {
-  const popcount32 = (x: number) => {
-    x >>>= 0
-    let c = 0
-    while (x) {
-      c += x & 1
-      x >>>= 1
-    }
-    return c
-  }
-  return popcount32((aHi ^ bHi) >>> 0) + popcount32((aLo ^ bLo) >>> 0)
-}
-
-// After attaching the BrowserView, ensure the visible content matches the
-// offscreen texture we intend to show. Keep the canvas visible until match.
-async function waitForBrowserViewSync(index: number, {
-  timeoutMs = 800,
-  pollIntervalMs = 80,
-  maxHamming = 6,
-}: { timeoutMs?: number; pollIntervalMs?: number; maxHamming?: number } = {}) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const fp = getFrameFingerprint(index)
-      if (!fp) break
-      const capture = await window.ipcRenderer.invoke('capture-browser-view-if-attached', index)
-      if (capture && capture.buffer && capture.size) {
-        const size = capture.size as any
-        const backingW = size.backingWidth || size.width
-        const backingH = size.backingHeight || size.height
-        const buf = capture.buffer instanceof Uint8Array ? capture.buffer : new Uint8Array(capture.buffer)
-        const { hi, lo } = computeAhash64BGRA(buf, backingW, backingH)
-        const ham = hamming64(fp.hashHi >>> 0, fp.hashLo >>> 0, hi >>> 0, lo >>> 0)
-        const sameDims = fp.width === backingW && fp.height === backingH
-        if (sameDims && ham <= maxHamming) {
-          return true
-        }
-      }
-    } catch (err) {
-      console.debug('[Threewebview] waitForBrowserViewSync capture failed', err)
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs))
-  }
-  return false
-}
-
 const captureTexturesForTransition = async (indices: number[]): Promise<boolean> => {
   if (!indices.length || store.setupMode) {
     return true
@@ -980,8 +901,12 @@ const transition = async (targetIndex: number, type: TransitionType) => {
         }
       }
 
+      // Sync the FROM texture from the currently-visible BrowserView so the canvas
+      // overlay starts from exactly what the user was looking at, not the potentially
+      // drifted offscreen window.
+      await refreshTextureFromBrowserViewCapture(fromIndex, 'source-sync-pre-overlay', 450)
+
       // Show canvas with source content to hide any browser view flashing
-      // Show fromPlane with already-captured source texture
       fromPlane.visible = true
       targetPlane.visible = false
       showCanvas.value = true
@@ -993,11 +918,6 @@ const transition = async (targetIndex: number, type: TransitionType) => {
 
       // Small delay to ensure canvas is painted
       await new Promise(resolve => setTimeout(resolve, 64))
-
-      // Capture the target while a BrowserView is still attached, so
-      // ViewManager.capturePage() can safely restore prior visibility and we
-      // don't accidentally reattach a view during the hidden-overlay phase.
-      await refreshTextureFromBrowserViewCapture(targetIndex, 'target pre-hide')
 
       // Now that the canvas is visibly presenting the source content, hide BrowserViews
       await hideBrowserViews()
@@ -1139,38 +1059,39 @@ const transition = async (targetIndex: number, type: TransitionType) => {
     logToMain(`[Threewebview] Transition finally block: shouldRestoreBrowserView=${shouldRestoreBrowserView}, isTransitioning=${store.isTransitioning}`)
     try {
       if (shouldRestoreBrowserView) {
-        // Reattach BrowserView first so there's always content underneath the canvas.
+        // Freeze both textures BEFORE revealing the BrowserView. Target painting was
+        // intentionally left enabled during the transition so the destination plane
+        // stayed live, but the fingerprint is now a moving target — we must stop it
+        // before we try to sync the canvas with the BrowserView.
+        try {
+          await disablePaintingForIndices([fromIndex, targetIndex])
+          logToMain(`[Threewebview] Disabled offscreen painting for final canvas→BrowserView handoff`)
+        } catch (err) {
+          logToMain(`[Threewebview] Failed to disable painting for handoff: ${err}`)
+        }
+
+        // Reattach BrowserView.
         logToMain(`[Threewebview] Restoring BrowserView for index ${store.currentIndex}`)
         await showBrowserView(store.currentIndex)
-        logToMain(`[Threewebview] BrowserView restored, starting sync wait...`)
+        logToMain(`[Threewebview] BrowserView restored`)
 
-        // Give Electron a short window to attach/paint the BrowserView, then compare
-        // a capture against the texture we just animated. If sync is slow, keep the
-        // canvas visible a little longer to avoid exposing a black frame.
+        // Give Electron a short window to attach and paint the BrowserView.
         await new Promise((resolve) => setTimeout(resolve, 64))
-        logToMain(`[Threewebview] Starting waitForBrowserViewSync...`)
-        let synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 900, pollIntervalMs: 80, maxHamming: 6 })
-        logToMain(`[Threewebview] waitForBrowserViewSync returned: ${synced}`)
-        if (!synced) {
-          logToMain('[Threewebview] BrowserView did not fully sync, retrying once')
-          await new Promise((resolve) => setTimeout(resolve, 120))
-          synced = await waitForBrowserViewSync(store.currentIndex, { timeoutMs: 500, pollIntervalMs: 60, maxHamming: 8 })
-          logToMain(`[Threewebview] Retry waitForBrowserViewSync returned: ${synced}`)
+
+        // Capture the now-visible BrowserView and apply it directly to the target
+        // texture. This ensures the canvas shows exactly what the BrowserView shows
+        // at the moment we hide it, eliminating the visual pop from offscreen drift.
+        logToMain(`[Threewebview] Syncing canvas to BrowserView...`)
+        const synced = await refreshTextureFromBrowserViewCapture(store.currentIndex, 'final-sync', 600)
+        if (synced && renderer.value && scene.value && camera.value) {
+          renderer.value.render(scene.value, camera.value)
+          logToMain(`[Threewebview] Canvas synced to BrowserView, rendering final frame`)
+        } else {
+          logToMain(`[Threewebview] BrowserView capture for final sync failed, proceeding anyway`)
         }
 
-        // Give compositor time to settle before hiding canvas
-        // Note: Using setTimeout instead of requestAnimationFrame because rAF
-        // may not fire when the render loop is stopped and canvas is hidden
-        logToMain(`[Threewebview] Waiting for compositor to settle...`)
+        // Let compositor settle before dropping the canvas.
         await new Promise((resolve) => setTimeout(resolve, 32))
-        await new Promise((resolve) => setTimeout(resolve, 32))
-        logToMain(`[Threewebview] Compositor settle complete`)
-
-        if (!synced) {
-          // Best-effort fallback: keep the overlay for one extra beat rather than
-          // dropping immediately to a potentially unpainted BrowserView.
-          await new Promise((resolve) => setTimeout(resolve, 80))
-        }
 
         showCanvas.value = false
         logToMain(`[Threewebview] Canvas hidden`)
